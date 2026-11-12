@@ -39,6 +39,12 @@
   #menu input { display:block; width:248px; margin:10px auto; padding:12px 6px; font:20px system-ui, sans-serif; text-align:center;
     border:3px solid #1a1010; border-radius:10px; background:#f4f6fb; color:#1a1010; }
   #menu .status { margin:12px 0 0; font:600 16px system-ui, sans-serif; color:#ffd23f; min-height:20px; }
+  #menu .ctl { max-height:58vh; overflow:auto; margin:0 auto 6px; background:rgba(20,24,40,.85); border:3px solid #1a1010; border-radius:10px; }
+  #menu table { border-collapse:collapse; font:14px system-ui, sans-serif; color:#eef2fa; text-align:left; }
+  #menu th, #menu td { padding:6px 12px; border-bottom:1px solid rgba(255,255,255,.08); white-space:nowrap; }
+  #menu th { position:sticky; top:0; background:#e8552e; color:#fff; font-weight:700; }
+  #menu td:first-child { font-weight:600; color:#ffd23f; }
+  #menu .tips { font:13px system-ui, sans-serif; color:#dfe8f5; text-align:left; max-width:560px; margin:8px auto 0; line-height:1.5; }
   #menu .hint { margin-top:16px; font:13px system-ui, sans-serif; color:#cfd8e6; }
   #ko { position:fixed; left:50%; top:38%; transform:translate(-50%,-50%); font:clamp(60px,12vw,140px) Impact, sans-serif; color:#ffd23f;
     -webkit-text-stroke:4px #1a1010; paint-order:stroke fill; display:none; z-index:4; pointer-events:none; }
@@ -597,11 +603,38 @@ function showMenu(page){
   menuPage = page; menuEl.style.display = 'flex'; menuBtns.innerHTML = '';
   netStop();
   const opts = page === 'mode'
-    ? [['Vs CPU', () => showMenu('level')], ['2 Players', () => startGame('2p')], ['Online', () => showMenu('online')]]
+    ? [['Vs CPU', () => showMenu('level')], ['2 Players', () => startGame('2p')], ['Online', () => showMenu('online')], ['Controls', () => showMenu('controls')]]
+    : page === 'controls'
+    ? [['Back', () => showMenu('mode')]]
     : page === 'online'
     ? [['Find match', () => findMatch()], ['Back', () => showMenu('mode')]]
     : [['Easy', () => startGame('cpu', 'Easy')], ['Normal', () => startGame('cpu', 'Normal')], ['Hard', () => startGame('cpu', 'Hard')], ['Back', () => showMenu('mode')]];
-  menuSub.textContent = page === 'mode' ? 'Choose a mode' : page === 'online' ? 'Enter your name' : 'Choose difficulty';
+  menuSub.textContent = page === 'mode' ? 'Choose a mode' : page === 'online' ? 'Enter your name' : page === 'controls' ? 'Controls' : 'Choose difficulty';
+  if (page === 'controls'){
+    const rows = [
+      ['Move', 'Left stick', 'W A S D', 'Arrow keys'],
+      ['Look / aim', 'Right stick', 'Drag with mouse', '—'],
+      ['Zoom camera', 'D-pad up / down', 'Mouse wheel', '—'],
+      ['Reset camera', 'Click right stick', '—', '—'],
+      ['Jump', 'A', 'Space', 'Enter'],
+      ['Punch (×3 combo)', 'X', 'J', 'Num 1'],
+      ['Heavy kick', 'Y', 'K', 'Num 2'],
+      ['Roll / dodge', 'B or RB', 'L', 'Num 3'],
+      ['Fireball (tap ×3 combo)', 'RT', 'I', 'Num 4'],
+      ['Charged mega blast', 'Hold RT, release', 'Hold I, release', 'Hold Num 4'],
+      ['Deflect', 'LB', 'O', 'Num 5'],
+      ['Fire / ice wall', 'LT', 'E', 'Num 7'],
+      ['Mute sound', '—', 'M', '—'],
+      ['Menu: choose / select / back', 'Stick · A · B', 'Arrows · Enter · Esc', 'Mouse click']
+    ];
+    const box = document.createElement('div'); box.className = 'ctl';
+    box.innerHTML = '<table><tr><th>Action</th><th>Controller</th><th>Keyboard + mouse</th><th>Player 2 keys</th></tr>' +
+      rows.map(r => '<tr>' + r.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('') + '</table>';
+    const tips = document.createElement('div'); tips.className = 'tips';
+    tips.innerHTML = '<b>Special moves:</b> X while running = dash punch · X in the air = dive kick · RT in the air = triple fireball spread · roll then RT = fire wave · deflect just before a shot hits = PERFECT.<br>' +
+      '<b>Online:</b> everyone uses the controller or the main keyboard keys. <b>2 Players:</b> Player 2 uses a second controller or the Player 2 keys.';
+    menuBtns.appendChild(box); menuBtns.appendChild(tips);
+  }
   if (page === 'online'){
     const inp = document.createElement('input'); inp.id = 'nameIn'; inp.maxLength = 14; inp.placeholder = 'Your name';
     let saved = ''; try { saved = localStorage.getItem('ed-name') || ''; } catch(e){}
