@@ -916,7 +916,7 @@ function moveFighter(f, o, inp, dt, isP1){
   if (f.cur === 'Roll' && f.busy > 0) want.copy(f.rollDir).multiplyScalar(14);
   else if (f.attack && f.attack.name === 'dive' && !f.onGround) want.copy(f.vel);
   else if (f.busy > 0 || f.stun > 0 || f.hp <= 0) want.set(0,0,0);
-  else want.copy(fwd).multiplyScalar(-inp.y).addScaledVector(right, inp.x).multiplyScalar(RUN*slow*(f.flying ? 1.6 : 1));
+  else want.copy(fwd).multiplyScalar(-inp.y).addScaledVector(right, inp.x).multiplyScalar(RUN*slow*(f.flying ? 1.15 : 1));
   f.vel.lerp(want, 1 - Math.exp(-(f.stun > 0 ? 3 : f.busy > 0 && f.cur !== 'Roll' ? 6 : ACCEL)*dt));
   f.root.position.addScaledVector(f.vel, dt);
   if (f.flying){   // hover: hold jump to rise, C / click left stick to go down, otherwise stay in the air
@@ -937,8 +937,8 @@ function moveFighter(f, o, inp, dt, isP1){
   if (!f.down){
     f.aimT = Math.max(0, (f.aimT || 0) - dt);
     const flySp = Math.hypot(f.vel.x, f.vel.z);
-    const target = f.aimT > 0 ? f.aimYaw : (f.flying && flySp > 4 ? Math.atan2(f.vel.x, f.vel.z) : Math.atan2(toOpp.x, toOpp.z));
-    if (f.pivot){ const tilt = f.flying && f.aimT <= 0 && !f.actions.Fly ? Math.min(1.25, flySp / 12) : 0; f.pivot.rotation.x += (tilt - f.pivot.rotation.x)*(1 - Math.exp(-6*dt)); }   // keep facing the aim right after shooting
+    const target = f.aimT > 0 ? f.aimYaw : Math.atan2(toOpp.x, toOpp.z);
+    if (f.pivot){ const tilt = 0; f.pivot.rotation.x += (tilt - f.pivot.rotation.x)*(1 - Math.exp(-6*dt)); }   // keep facing the aim right after shooting
     let d = target - f.root.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));
     f.root.rotation.y += d * (1 - Math.exp(-16*dt));
   }
