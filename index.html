@@ -1528,7 +1528,8 @@ addEventListener('resize', () => { camera.aspect = innerWidth/innerHeight; camer
 
 // ---------- Loop ----------
 const clock = new THREE.Clock(); let padTimer = 0;
-function loop(){
+function loop(){ requestAnimationFrame(loop); try { loopBody(); } catch(err){ console.error(err); } }   // an error can never freeze the game
+function loopBody(){
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
   const gdt = hitstop > 0 ? dt*0.04 : dt; hitstop = Math.max(0, hitstop - dt);   // freeze-frame on impact
   const inMenu = !gameMode;
@@ -1551,7 +1552,6 @@ function loop(){
   updateCamera(dt); updateAimDot();
   padTimer += dt; if (padTimer > 1) { padTimer = 0; updatePads(); }
   renderer.render(scene, camera);
-  requestAnimationFrame(loop);
 }
 loop();
 </script>
