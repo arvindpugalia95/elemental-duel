@@ -447,7 +447,7 @@ function makeFighter(element, tint, startPos, hpEl, charKey = 'ch24'){
     m.traverse(o => {
       if (!o.isMesh) return;
       o.castShadow = true; o.receiveShadow = false; o.frustumCulled = false;
-      const conv = mt => { const c = mt.clone(); c.color.multiply(new THREE.Color(ELEMENT_TINT[element])); c.emissive = new THREE.Color(0); f.mats.push(c); return c; };
+      const conv = mt => { const c = mt.clone(); c.userData.base = c.color.clone(); c.color.multiply(new THREE.Color(ELEMENT_TINT[f.element])); c.emissive = new THREE.Color(0); f.mats.push(c); return c; };
       o.material = Array.isArray(o.material) ? o.material.map(conv) : conv(o.material);
     });
     m.updateMatrixWorld(true);
@@ -591,6 +591,7 @@ function aiInput(){
     case 'heavy':    out.y = d > 2 ? -1 : 0; if (d < 2.6) { tap('kick'); ai.t = Math.min(ai.t, 0.3); } break;
   }
   if (Math.random() < 0.004) out.jump = true;
+  if (Math.random() < 0.006) out.special = true;
   return out;
 }
 function aiFor(f, tgt, L, dt){   // CPU brain for any fighter (used for survival enemies)
@@ -626,11 +627,97 @@ function aiFor(f, tgt, L, dt){   // CPU brain for any fighter (used for survival
     case 'heavy':    out.y = d > 2 ? -1 : 0; if (d < 2.6) { tap('kick'); a.t = Math.min(a.t, 0.3); } break;
   }
   if (Math.random() < 0.004) out.jump = true;
+  if (Math.random() < 0.006) out.special = true;
   return out;
 }
 
 // ---------- Survival mode: waves of CPU enemies keep spawning, fight as long as you can ----------
 let SURV = null;
+// ---------- Elements: choose your power; each element has its own special move ----------
+const EL_LIST = ['fire', 'ice', 'earth', 'storm'];
+const EL_NAME = { fire:'Kaen (Fire)', ice:'Hyoga (Ice)', earth:'Gaia (Earth)', storm:'Raiden (Storm)' };
+const EL_TINT_HEX = { fire:0xff5a2a, ice:0x3a9be0, earth:0x4fc24a, storm:0xa45cff };
+const SPECIAL_DESC = {
+  fire:'FIRE LASER: a burning beam that keeps hitting while it lasts',
+  ice:'FREEZE: freezes the enemy solid for 2 s. Hit them while frozen for bonus damage; a kick SHATTERS the ice',
+  earth:'BOULDER: rips a huge rock from the ground and hurls it (big knockback). Your wall (LT/E) is a solid rock wall',
+  storm:'LIGHTNING: calls a lightning bolt down on the nearest enemy, wherever they are'
+};
+let P1_EL = 'fire', PEND = null;
+function pickElement(mode, level){ PEND = { mode, level }; showMenu('element'); }
+function chooseEl(el){ P1_EL = el; startGame(PEND.mode, PEND.level); }
+function setElement(f, el){
+  f.element = el;
+  f.mats.forEach(m => { if (m.userData.base) m.color.copy(m.userData.base).multiply(new THREE.Color(ELEMENT_TINT[el])); });
+  f.aura.material.color.setHex(EL_TINT_HEX[el]); f.shield.material.color.setHex(EL_TINT_HEX[el]);
+}
+const SPECIALS = [];
+function specialFoes(f){
+  if (gameMode === 'survival') return f === p1f ? FIGHTERS.filter(x => x.active && x !== f && x.hp > 0) : [p1f];
+  return FIGHTERS.filter(x => x.active && x !== f && x.hp > 0);
+}
+function doSpecial(f, o, aim){
+  if (TUT && f === p1f) TUT.special = true;
+  const el = f.element;
+  if (el === 'fire'){
+    const L = 22, g = new THREE.Group();
+    const outer = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, L, 14, 1, true), new THREE.MeshBasicMaterial({ color:0xff7b1c, transparent:true, opacity:0.8, blending:THREE.AdditiveBlending, depthWrite:false }));
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, L, 8, 1, true), new THREE.MeshBasicMaterial({ color:0xfff4c0 }));
+    g.add(outer, core); scene.add(g);
+    SPECIALS.push({ kind:'laser', f, aim:aim.clone(), g, outer, L, t:1.1, tick:0 });
+    sfx.shot('fire', 2.2); shake = Math.max(shake, 0.15);
+  } else if (el === 'ice'){
+    shoot(f, o, handPos(f, aim, 0), aim, { scale:1.15, dmg:6, kb:0.5, speed:24, freeze:true });
+  } else if (el === 'earth'){
+    explodeDust(f.root.position, 'earth');
+    shoot(f, o, handPos(f, aim, 0), aim, { scale:1.7, dmg:14, kb:11, launch:6, heavy:true, speed:21, rock:true });
+  } else {
+    let tgt = null, bd = 35*35;
+    for (const x of specialFoes(f)){ const d = x.root.position.distanceToSquared(f.root.position); if (d < bd){ bd = d; tgt = x; } }
+    if (!tgt){ dmgText(f.root.position, 'NO TARGET', '#d8c8ff'); return; }
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.75, 32), new THREE.MeshBasicMaterial({ color:0xd8a8ff, transparent:true, opacity:0.9, side:THREE.DoubleSide, depthWrite:false }));
+    ring.rotation.x = -Math.PI/2; ring.position.set(tgt.root.position.x, 0.06, tgt.root.position.z); scene.add(ring);
+    SPECIALS.push({ kind:'bolt', f, tgt, ring, t:0.4 });
+    sfx.charge(f, -1);
+  }
+}
+function updateSpecials(dt){
+  for (let i = SPECIALS.length - 1; i >= 0; i--){
+    const s = SPECIALS[i]; s.t -= dt;
+    if (s.kind === 'laser'){
+      const f = s.f, start = handPos(f, s.aim, 0);
+      s.g.position.copy(start).addScaledVector(s.aim, s.L/2);
+      s.g.quaternion.setFromUnitVectors(UP, s.aim);
+      const fl = 0.8 + Math.random()*0.5; s.outer.scale.set(fl, 1, fl);
+      f.busy = Math.max(f.busy, 0.1); f.aimT = Math.max(f.aimT || 0, 0.2);
+      if (Math.random() < 0.6) puff(start.clone().addScaledVector(s.aim, Math.random()*s.L), ELEM.fire.c[1 + (Math.random()*3|0)], 0.3, 0, 1.5, 0, 0.25, ELEM.fire.c);
+      s.tick -= dt;
+      if (s.tick <= 0 && f.hp > 0 && f.stun === 0){
+        s.tick = 0.1;
+        for (const t of specialFoes(f)){
+          const v = new THREE.Vector3(t.root.position.x, t.root.position.y + 0.75, t.root.position.z).sub(start);
+          const along = v.dot(s.aim);
+          if (along > 0 && along < s.L && v.addScaledVector(s.aim, -along).length() < 0.75) hit(t, { dmg:3, kb:1.2, noStop:true }, s.aim);
+        }
+      }
+      if (s.t <= 0 || f.hp <= 0 || f.stun > 0){ scene.remove(s.g); SPECIALS.splice(i, 1); }
+    } else if (s.kind === 'bolt'){
+      s.ring.position.set(s.tgt.root.position.x, 0.06, s.tgt.root.position.z);
+      s.ring.scale.setScalar(1 + (0.4 - s.t)*2);
+      if (s.t <= 0){
+        const p = s.tgt.root.position, top = new THREE.Vector3(p.x, 16, p.z), end = new THREE.Vector3(p.x, p.y + 0.8, p.z);
+        for (let k = 0; k <= 14; k++){
+          const q = top.clone().lerp(end, k/14).add(new THREE.Vector3((Math.random() - 0.5)*0.9, 0, (Math.random() - 0.5)*0.9));
+          puff(q, k % 2 ? 0xffffff : 0xd8a8ff, 0.45, 0, 0, 0, 0.22);
+        }
+        puff(end, 0xffffff, 2.2, 0, 0, 0, 0.12); explodeDust(p, 'storm'); shake = Math.max(shake, 0.25);
+        sfx.clash();
+        if (s.tgt.hp > 0 && s.tgt.iframes === 0){ hit(s.tgt, { dmg:14, kb:3 }, new THREE.Vector3(0, 0, 1)); s.tgt.stun = Math.max(s.tgt.stun, 0.8); }
+        scene.remove(s.ring); SPECIALS.splice(i, 1);
+      }
+    }
+  }
+}
 // ---------- Tutorial: guided steps against a training dummy ----------
 let TUT = null;
 const usingPad = () => !locked() && [...navigator.getGamepads()].some(Boolean);
@@ -646,6 +733,7 @@ const TUT_STEPS = [
   { t:'Block',                pad:'HOLD LB for a moment',                        kb:'HOLD RIGHT CLICK (or O) for a moment',    done:T => T.blocked > 0.6 },
   { t:'Raise an element wall',pad:'Press LT',                                    kb:'Press E',                                 done:T => T.wall },
   { t:'Dodge roll',           pad:'Press B while moving',                        kb:'Press L while moving',                    done:T => T.rolled },
+  { t:'Element special',     pad:'Press RB', kb:'Press Q (or click the middle mouse button)', done:T => T.special },
   { t:'Hover in the air',     pad:'Press A, then A again in the air. Press B to come down', kb:'Press SPACE, then SPACE again in the air. Press C to come down', done:T => T.landedFromFly },
 ];
 function tutorialTick(dt, inp){
@@ -673,7 +761,7 @@ function tutorialTick(dt, inp){
   }
   const s = TUT_STEPS[T.step], pad = usingPad();
   el.innerHTML = '<div class="st">TUTORIAL · STEP ' + (T.step + 1) + ' OF ' + TUT_STEPS.length + '</div><div class="tt">' + s.t + (T.wait > 0 ? ' <span class="ok">✔ Nice!</span>' : '') + '</div>' +
-    '<div class="ln">🎮 ' + s.pad + '</div><div class="ln">⌨️ ' + s.kb + '</div>';
+    (s.t === 'Element special' ? '<div class="ln" style="color:#ffd23f">' + SPECIAL_DESC[p1f.element] + '</div>' : '') + '<div class="ln">🎮 ' + s.pad + '</div><div class="ln">⌨️ ' + s.kb + '</div>';
 }
 addEventListener('keydown', e => { if (e.code === 'Escape' && TUT && menuEl.style.display === 'none'){ document.getElementById('tut').style.display = 'none'; TUT = null; gameMode = null; resetFighters(); showMenu('mode'); } });
 function survLevel(){ const w = SURV ? SURV.wave : 1; return w <= 2 ? LEVELS.Easy : w <= 5 ? LEVELS.Normal : LEVELS.Hard; }
@@ -690,7 +778,7 @@ function spawnWave(){
     e.active = true; e.root.visible = true; e.counted = false; e.deadT = 0; e.ai = null;
     e.stun = 0; e.busy = 0; e.down = false; e.flying = false; e.vel.set(0,0,0); e.vy = 0;
     if (e.ready) play(e, 'Idle', 0.2, true);
-    labels[e.pid].textContent = 'Enemy ' + (i + 1) + ' · ' + FIGHTER_NAMES[e.pid];
+    labels[e.pid].textContent = 'Enemy ' + (i + 1) + ' · ' + EL_NAME[e.element];
   });
   document.querySelector('.bar.l2').style.display = p3f.active ? 'block' : 'none';
   document.querySelector('.bar.r2').style.display = p4f.active ? 'block' : 'none';
@@ -1058,15 +1146,17 @@ function showMenu(page){
   menuPage = page; menuEl.style.display = 'flex'; menuBtns.innerHTML = '';
   if (page !== 'browse') netStop();
   const opts = page === 'mode'
-    ? [['Tutorial', () => startGame('tutorial')], ['Vs CPU', () => showMenu('level')], ['Survival (waves of enemies)', () => startGame('survival')], ['2 Players', () => startGame('2p')], ['Online', () => showMenu('online')], ['Controls', () => showMenu('controls')]]
+    ? [['Tutorial', () => pickElement('tutorial')], ['Vs CPU', () => showMenu('level')], ['Survival (waves of enemies)', () => pickElement('survival')], ['2 Players', () => pickElement('2p')], ['Online', () => showMenu('online')], ['Controls', () => showMenu('controls')]]
+    : page === 'element'
+    ? [['🔥 Fire · laser beam', () => chooseEl('fire')], ['❄️ Ice · freeze + combo', () => chooseEl('ice')], ['🪨 Earth · boulders + rock wall', () => chooseEl('earth')], ['⚡ Storm · lightning strike', () => chooseEl('storm')], ['Back', () => showMenu('mode')]]
     : page === 'controls'
     ? [['Back', () => showMenu('mode')]]
     : page === 'online'
     ? [['Find 1 vs 1 match', () => findMatch()], ['Create free-for-all game', () => createFFA()], ['Join free-for-all game', () => browseFFA()], ['Back', () => showMenu('mode')]]
     : page === 'browse'
     ? [...BROWSE.map(g => ['Join ' + g.host + "'s game (" + g.n + '/4)', () => joinFFASlot(g.k)]), ['Refresh list', () => browseFFA()], ['Back', () => showMenu('online')]]
-    : [['Easy', () => startGame('cpu', 'Easy')], ['Normal', () => startGame('cpu', 'Normal')], ['Hard', () => startGame('cpu', 'Hard')], ['Back', () => showMenu('mode')]];
-  menuSub.textContent = page === 'mode' ? 'Choose a mode' : page === 'online' ? 'Enter your name' : page === 'browse' ? 'Free-for-all games' : page === 'controls' ? 'Controls' : 'Choose difficulty';
+    : [['Easy', () => pickElement('cpu', 'Easy')], ['Normal', () => pickElement('cpu', 'Normal')], ['Hard', () => pickElement('cpu', 'Hard')], ['Back', () => showMenu('mode')]];
+  menuSub.textContent = page === 'element' ? 'Choose your element' : page === 'mode' ? 'Choose a mode' : page === 'online' ? 'Enter your name' : page === 'browse' ? 'Free-for-all games' : page === 'controls' ? 'Controls' : 'Choose difficulty';
   if (page === 'controls'){
     const rows = [
       ['Move', 'Left stick', 'W A S D', 'Arrow keys'],
@@ -1081,7 +1171,8 @@ function showMenu(page){
       ['Fly down', 'B (while hovering)', 'C', 'Num 8'],
       ['Punch (×3 combo)', 'X', 'J', 'Num 1'],
       ['Heavy kick', 'Y', 'K', 'Num 2'],
-      ['Roll / dodge', 'B or RB', 'L', 'Num 3'],
+      ['Roll / dodge', 'B', 'L', 'Num 3'],
+      ['Element special (costs 30 energy)', 'RB', 'Q or middle mouse click', 'Num 9'],
       ['Fireball (tap ×3 combo) · costs energy', 'RT', 'Left click (far away) or I', 'Num 4'],
       ['Punch / kick combo when close', 'X / Y', 'Left click (close up) or J / K', 'Num 1 / 2'],
       ['Charged mega blast', 'Hold RT, release', 'Hold left click or I, release', 'Hold Num 4'],
@@ -1125,6 +1216,8 @@ function resetFighters(){
 function startGame(mode, level){
   sfx.unlock(); sfx.click();
   gameMode = mode; AIL = LEVELS[level || 'Normal'];
+  if (mode === 'online' || mode === 'ffa') FIGHTERS.forEach((f, i) => setElement(f, EL_LIST[i]));
+  else { const others = EL_LIST.filter(e => e !== P1_EL); setElement(p1f, P1_EL); setElement(p2f, others[0]); setElement(p3f, others[1]); setElement(p4f, others[2]); }
   ME = p1f; THEM = p2f;
   FIGHTERS.forEach((f, i) => { f.remote = false; f.active = i < 2; f.root.visible = f.active; });
   document.querySelector('.bar.l2').style.display = document.querySelector('.bar.r2').style.display = 'none';
@@ -1137,8 +1230,8 @@ function startGame(mode, level){
     if (ids.includes(2)) document.querySelector('.bar.l2').style.display = 'block';
     if (ids.includes(3)) document.querySelector('.bar.r2').style.display = 'block';
   }
-  document.querySelector('.bar.l b').textContent = 'Kaen';
-  document.querySelector('.bar.r b').textContent = mode === 'cpu' ? `Hyoga (CPU · ${level})` : 'Hyoga (P2)';
+  document.querySelector('.bar.l b').textContent = EL_NAME[p1f.element] + ' (you)';
+  document.querySelector('.bar.r b').textContent = mode === 'cpu' ? `${EL_NAME[p2f.element]} (CPU · ${level})` : EL_NAME[p2f.element] + ' (P2)';
   if (mode === 'online'){
     ME = NET.host ? p1f : p2f; THEM = NET.host ? p2f : p1f; THEM.remote = true;
     document.querySelector('.bar.l b').textContent = 'Kaen · ' + (NET.host ? NET.name : NET.opp) + (NET.host ? ' (you)' : '');
@@ -1184,13 +1277,15 @@ function readInput(idx){
   if (idx === 1 && gameMode === 'cpu') return aiInput();
   let x = 0, y = 0;
   const b = { sprint: idx === 0 ? !!(keys.ShiftLeft || keys.ShiftRight) : !!keys.Numpad0, down:!!keys[k.down], jump:!!keys[k.jump], roll:!!keys[k.roll], punch:!!keys[k.punch], kick:!!keys[k.kick], shoot:!!keys[k.shoot], deflect:!!keys[k.deflect], wall:!!keys[k.wall] };
+  b.special = !!keys[idx === 0 ? 'KeyQ' : 'Numpad9'];
   if (pad){
     x = pad.axes[0]||0; y = pad.axes[1]||0;
     if (Math.hypot(x, y) > 0.92) b.sprint = true;   // push the stick all the way = sprint (no stick click needed)
     b.jump  ||= pad.buttons[0]?.pressed;   // A
     b.down  ||= pad.buttons[10]?.pressed || pad.buttons[1]?.pressed;  // B (or left stick click) = fly down while hovering
     b.sprint ||= pad.buttons[10]?.pressed; // click left stick = sprint (on the ground)
-    b.roll  ||= pad.buttons[1]?.pressed || pad.buttons[5]?.pressed;   // B or RB
+    b.roll  ||= pad.buttons[1]?.pressed;   // B
+    b.special ||= pad.buttons[5]?.pressed;   // RB = element special
     b.punch ||= pad.buttons[2]?.pressed;   // X
     b.kick  ||= pad.buttons[3]?.pressed;   // Y
     b.shoot ||= (pad.buttons[7]?.value || 0) > 0.4;   // RT
@@ -1201,7 +1296,7 @@ function readInput(idx){
     const me = isNet() ? ME : p1f, them = nearestFoe(me);
     const near = me && them && me.root.position.distanceTo(them.root.position) < 3.2;
     if (near) b.punch ||= mouseBtn.shoot; else b.shoot ||= mouseBtn.shoot;   // close = punch/kick combo, far = magic
-    b.deflect ||= mouseBtn.deflect;
+    b.deflect ||= mouseBtn.deflect; b.special ||= mouseBtn.special;
   }
   if (keys[k.l]) x -= 1; if (keys[k.r]) x += 1; if (keys[k.u]) y -= 1; if (keys[k.d]) y += 1;
   const len = Math.hypot(x, y); if (len < 0.18) { x = 0; y = 0; } else if (len > 1) { x /= len; y /= len; }
@@ -1246,6 +1341,8 @@ function moveFighter(f, o, inp, dt, isP1){
   f.busy = Math.max(0, f.busy - dt); f.stun = Math.max(0, f.stun - dt); f.iframes = Math.max(0, f.iframes - dt);
   f.comboT -= dt; f.chainT -= dt; f.sinceRoll += dt; f.cd = Math.max(0, f.cd - dt);
   f.deflectT = Math.max(0, f.deflectT - dt); f.dcd = Math.max(0, f.dcd - dt);
+  f.slowT = Math.max(0, (f.slowT || 0) - dt);
+  if (f.frozen > 0){ f.frozen -= dt; if (f.frozen <= 0){ f.frozen = 0; f.stun = Math.min(f.stun, 0.1); if (f.iceBlock){ f.root.remove(f.iceBlock); f.iceBlock = null; explodeDust(f.root.position, 'ice'); } } }
   f.blocking = !!inp.deflect && f.hp > 0 && f.stun === 0 && f.busy === 0;   // hold block = take much less melee damage
   f.mp = Math.min(100, (f.mp ?? 100) + dt*(f.charging ? 0 : 7));
   if (f.mpEl) f.mpEl.style.width = f.mp + '%';
@@ -1262,6 +1359,15 @@ function moveFighter(f, o, inp, dt, isP1){
   const free = f.busy === 0 && f.stun === 0 && f.hp > 0;
   const speed = Math.hypot(f.vel.x, f.vel.z);
 
+  // ---- RB / Q: element special (fire laser, ice freeze, earth boulder, storm lightning) ----
+  f.scd = Math.max(0, (f.scd || 0) - dt);
+  if (!isNet() && f.stun === 0 && f.busy === 0 && f.hp > 0 && f.scd === 0 && pressed(f, inp, 'special') && !(f.mp < 30 && noEnergy(f))){
+    f.mp -= 30; f.scd = 3;
+    const sa = aimDir(f, isP1, new THREE.Vector3());
+    f.root.rotation.y = Math.atan2(sa.x, sa.z); f.aimYaw = f.root.rotation.y; f.aimT = 0.8;
+    play(f, 'Cast', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(1.3); f.busy = 0.45;
+    doSpecial(f, o, sa);
+  }
   // ---- LT: raise an ice wall / fire wall between you and the enemy ----
   f.wcd = Math.max(0, f.wcd - dt);
   if (f.stun === 0 && f.busy === 0 && f.hp > 0 && f.onGround && f.wcd === 0 && pressed(f, inp, 'wall') && !(f.mp < 30 && noEnergy(f))){
@@ -1353,7 +1459,7 @@ function moveFighter(f, o, inp, dt, isP1){
   else if (!f.onGround && !f.flying && f.hp > 0 && f.stun === 0 && pressed(f, inp, 'jump')){ f.flying = true; f.vy = 2; sfx.whoosh(); }   // double jump = fly
 
   // ---- velocity ----
-  const slow = f.charging || f.blocking ? 0.35 : 1;
+  const slow = f.charging || f.blocking ? 0.35 : (f.slowT > 0 ? 0.6 : 1);
   const sprint = inp.sprint && f.onGround && !f.flying && !f.charging && !f.blocking ? 1.6 : 1;   // Shift / L3 = run faster
   if (f.cur === 'Roll' && f.busy > 0) want.copy(f.rollDir).multiplyScalar(14);
   else if (f.attack && f.attack.name === 'dive' && !f.onGround) want.copy(f.vel);
@@ -1409,7 +1515,7 @@ function moveFighter(f, o, inp, dt, isP1){
       f.actions[f.cur].setEffectiveTimeScale(Math.max(0.6, sp / 8));
     }
   }
-  f.mixer.update(dt); supermanPose(f);
+  f.mixer.update(f.frozen > 0 ? 0 : dt); supermanPose(f);
   f.aura.material.opacity = 0.4 + Math.sin(performance.now()/200)*0.15;
   sfx.charge(f, f.charging && f.hp > 0 ? f.charge : -1);
   f.prev = inp;
@@ -1417,13 +1523,17 @@ function moveFighter(f, o, inp, dt, isP1){
 let hitstop = 0;
 function hit(o, atk, dir){
   if (o.hp <= 0) return;
+  if (o.frozen > 0 && !atk.freeze){   // hitting a frozen enemy deals bonus damage; a heavy hit shatters the ice
+    atk = Object.assign({}, atk, { dmg:atk.dmg + (atk.heavy ? 8 : 3) });
+    if (atk.heavy){ o.frozen = 0.001; dmgText(o.root.position, 'SHATTER!', '#bff0ff'); }
+  }
   if (TUT && o === p2f){ if (atk.range){ if ((p1f.cur || '').startsWith('Kick')) TUT.kicks++; else TUT.punches++; } else if (!atk.burn) TUT.shotHits++; }
   if (o.blocking && !o.remote){ atk = { dmg:Math.max(1, Math.round(atk.dmg*0.25)), kb:atk.kb*0.35 }; dmgText(o.root.position, 'BLOCK', '#cfe8ff'); }
   sfx.hit(!!atk.heavy);
   if (o.remote){
     // online: the other player's game applies the damage; show the impact here right away
     send({ t:'hit', to:o.pid, atk:{ dmg:atk.dmg, kb:atk.kb, launch:atk.launch || 0, heavy:!!atk.heavy }, dir:[dir.x, dir.y, dir.z] });
-    hitstop = atk.heavy ? 0.11 : 0.055; o.flash = 0.09; o.mats.forEach(m => m.emissive && m.emissive.setHex(0xffffff));
+    if (!atk.noStop) hitstop = atk.heavy ? 0.11 : 0.055; o.flash = 0.09; o.mats.forEach(m => m.emissive && m.emissive.setHex(0xffffff));
     dmgText(o.root.position, atk.dmg, atk.heavy ? '#ffcf3a' : '#ffffff');
     shake = Math.max(shake, atk.heavy ? 0.28 : 0.14); spark(o.root.position, atk.heavy);
     return;
@@ -1434,7 +1544,7 @@ function hit(o, atk, dir){
   if (atk.launch){ o.vy = atk.launch; o.onGround = false; }
   if (atk.heavy) o.flying = false;
   o.busy = 0; o.attack = null; o.charging = false; o.charge = 0; o.aura.scale.setScalar(1);
-  hitstop = atk.heavy ? 0.11 : 0.055;
+  if (!atk.noStop) hitstop = atk.heavy ? 0.11 : 0.055;
   o.flash = 0.09; o.mats.forEach(m => m.emissive && m.emissive.setHex(0xffffff));
   dmgText(o.root.position, atk.dmg, atk.heavy ? '#ffcf3a' : '#ffffff');
   if (o.hp <= 0){ play(o, 'Death', 0.08, true); o.stun = 99; o.down = true; }
@@ -1448,6 +1558,15 @@ function hit(o, atk, dir){
   }
   shake = Math.max(shake, atk.heavy ? 0.28 : 0.14);
   spark(o.root.position, atk.heavy);
+  if (atk.slow) o.slowT = 1.2;
+  if (atk.freeze && o.hp > 0){   // ICE: frozen solid for 2 seconds -> free combo time
+    o.stun = 2.0; o.frozen = 2.0; o.vel.set(0, 0, 0); o.down = false;
+    if (!o.iceBlock){
+      o.iceBlock = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.6, 1.7, 7), new THREE.MeshToonMaterial({ color:0xbfeeff, gradientMap:GRAD, transparent:true, opacity:0.6 }));
+      o.iceBlock.position.y = 0.8; o.iceBlock.add(new THREE.Mesh(o.iceBlock.geometry, inkMat(0.004))); o.root.add(o.iceBlock);
+    }
+    dmgText(o.root.position, 'FROZEN!', '#bfeeff');
+  }
 }
 // floating damage numbers
 const dmgPool = [];
@@ -1541,10 +1660,10 @@ void main(){
   gl_FragColor = vec4(col, 1.0);
 }`;
 const ELEM = {
-  fire: { c:[0xfffbe0, 0xffd23f, 0xff7b1c, 0xd92a1c], dmg:10, kb:6, rise:2.4, stretch:1.6, wobble:0.16 },
-  ice:  { c:[0xffffff, 0xcff3ff, 0x6fcbff, 0x2a78d0], dmg:9,  kb:4, rise:-0.4, stretch:1.0, wobble:0.07 },
-  earth:{ c:[0xffffff, 0xd8ffb0, 0x6fd34a, 0x2f7d1c], dmg:10, kb:5, rise:0.6, stretch:1.2, wobble:0.12 },
-  storm:{ c:[0xffffff, 0xf0d8ff, 0xb46cff, 0x5a1fa8], dmg:9,  kb:5, rise:1.0, stretch:1.4, wobble:0.14 }
+  fire: { c:[0xfffbe0, 0xffd23f, 0xff7b1c, 0xd92a1c], dmg:10, kb:6, rise:2.4, stretch:1.6, wobble:0.16, spd:1.0 },
+  ice:  { c:[0xffffff, 0xcff3ff, 0x6fcbff, 0x2a78d0], dmg:9,  kb:4, rise:-0.4, stretch:1.0, wobble:0.07, spd:0.95, slow:true },
+  earth:{ c:[0xffffff, 0xd8ffb0, 0x6fd34a, 0x2f7d1c], dmg:10, kb:5, rise:0.6, stretch:1.2, wobble:0.12, spd:0.8, dmgB:2, kbB:3 },
+  storm:{ c:[0xffffff, 0xf0d8ff, 0xb46cff, 0x5a1fa8], dmg:9,  kb:5, rise:1.0, stretch:1.4, wobble:0.14, spd:1.35, dmgB:-2 }
 };
 function fireMat(e){
   return new THREE.ShaderMaterial({ vertexShader:FIRE_VS, fragmentShader:FIRE_FS,
@@ -1593,14 +1712,15 @@ function shoot(owner, target, pos, dir, opt = {}){
   const streak = add(KI_STREAK, e.c[1], 0.28); streak.rotation.x = -Math.PI/2; streak.position.z = -1.6;
   const streak2 = add(KI_STREAK, 0xffffff, 0.22); streak2.rotation.x = -Math.PI/2; streak2.position.z = -1.0; streak2.scale.set(0.45, 0.6, 0.45);
   body.add(shell, shell2, streak, streak2); body.userData.shell = shell; body.userData.shell2 = shell2; body.userData.r1 = r1; body.userData.r2 = r2;
+  if (opt.rock){ shell.visible = shell2.visible = streak.visible = streak2.visible = false; const rk = new THREE.Mesh(ROCK_GEO, new THREE.MeshToonMaterial({ color:0x7a5a3c, gradientMap:GRAD })); rk.add(new THREE.Mesh(ROCK_GEO, inkMat(0.004))); body.add(rk); }
   const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:e.c[2], transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.35 }));
   glow.scale.setScalar(1.7*sc); body.scale.setScalar(sc);
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:0xffffff, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.0 }));
   halo.scale.setScalar(1.6*sc); glow.add(halo);
   g.add(glow, body);
   g.position.copy(pos); g.lookAt(pos.clone().add(dir)); scene.add(g);
-  shots.push({ g, body, glow, owner, target, vel:dir.clone().multiplyScalar(opt.speed || 30), life:1.8, e, trailT:0, age:0, sc,
-    dmg:opt.dmg ?? e.dmg, kb:opt.kb ?? e.kb, launch:opt.launch || 0, heavy:!!opt.heavy, aoe:opt.aoe || 0, sid, auth });
+  shots.push({ g, body, glow, owner, target, vel:dir.clone().multiplyScalar((opt.speed || 30)*(e.spd || 1)), life:1.8, e, trailT:0, age:0, sc,
+    dmg:Math.max(1, (opt.dmg ?? e.dmg) + (e.dmgB || 0)), kb:(opt.kb ?? e.kb) + (e.kbB || 0), freeze:!!opt.freeze, rock:!!opt.rock, launch:opt.launch || 0, heavy:!!opt.heavy, aoe:opt.aoe || 0, sid, auth });
   for (let i = 0; i < 8; i++)
     puff(pos, e.c[i % 3], 0.6*sc, dir.x*6 + (Math.random()-0.5)*5, Math.random()*3, dir.z*6 + (Math.random()-0.5)*5, 0.18, e.c);
 }
@@ -1623,7 +1743,7 @@ function explode(pos, e, big, sc = 1){
 }
 // ---------- Elemental walls ----------
 const walls = [];
-const WALL = { ice:{ w:5.6, h:3.6, t:0.9, hp:2, life:5 }, fire:{ w:5.6, h:3.4, t:0.9, hp:2, life:4.5 } };   // hp = hits it can take
+const WALL = { earth:{ w:6, h:3.0, t:1.3, hp:3, life:7 }, ice:{ w:5.6, h:3.6, t:0.9, hp:2, life:5 }, fire:{ w:5.6, h:3.4, t:0.9, hp:2, life:4.5 } };   // hp = hits it can take
 const iceShardMat = new THREE.MeshToonMaterial({ color:0xbfeeff, gradientMap:GRAD, emissive:0x2a6fa8, emissiveIntensity:0.35 });
 const iceShardMat2 = new THREE.MeshToonMaterial({ color:0x7fd2ff, gradientMap:GRAD, emissive:0x1d5a90, emissiveIntensity:0.35 });
 let wallN = 0;
@@ -1636,7 +1756,15 @@ function createWall(f, n, at, wid){
   if (!at && isNet()) send({ t:'wall', wid, n:[n.x, n.y, n.z], c:[pos.x, 0, pos.z] });
   g.position.copy(pos); g.rotation.y = Math.atan2(n.x, n.z);
   const flames = [];
-  if (el === 'ice'){
+  if (el === 'earth'){
+    // rough rock slabs pulled up from the ground
+    for (let i = 0; i < 6; i++){
+      const h = cfg.h*(0.75 + Math.random()*0.35), geo = new THREE.DodecahedronGeometry(1, 0);
+      const m = new THREE.Mesh(geo, new THREE.MeshToonMaterial({ color:i % 2 ? 0x7a5a3c : 0x8d6b48, gradientMap:GRAD }));
+      m.scale.set(0.9, h/2, 0.8); m.position.set(-cfg.w/2 + (i + 0.5)*cfg.w/6, h/2, (Math.random() - 0.5)*0.3); m.rotation.y = Math.random();
+      m.castShadow = true; m.add(new THREE.Mesh(geo, inkMat(0.004))); inner.add(m);
+    }
+  } else if (el === 'ice'){
     // chunky crystal slabs of different heights, like a glacier wall
     const cols = 9;
     for (let i = 0; i < cols; i++){
@@ -1694,7 +1822,7 @@ function updateWalls(dt){
       _d.subVectors(f.root.position, w.c);
       const a = _d.dot(w.u), b = _d.dot(w.n);
       if (Math.abs(a) < w.cfg.w/2 + 0.4 && Math.abs(b) < w.cfg.t/2 + 0.6 && f.root.position.y < w.cfg.h){
-        if (w.el === 'ice'){ const push = (w.cfg.t/2 + 0.6 - Math.abs(b)) * Math.sign(b || 1); f.root.position.addScaledVector(w.n, push); }
+        if (w.el === 'ice' || w.el === 'earth'){ const push = (w.cfg.t/2 + 0.6 - Math.abs(b)) * Math.sign(b || 1); f.root.position.addScaledVector(w.n, push); }
         else if (f !== w.owner && f.hp > 0 && !w.owner.remote){
           w.burnT -= dt;
           if (w.burnT <= 0){ w.burnT = 0.4; hit(f, { dmg:4, kb:5, burn:true }, w.n.clone().multiplyScalar(Math.sign(b || 1))); }
@@ -1744,6 +1872,7 @@ function clash(a, b){
   hitstop = 0.07; shake = Math.max(shake, 0.2);
   dmgText(pos.clone().setY(pos.y - 2.4), 'CLASH!', '#ffffff');
 }
+const ROCK_GEO = new THREE.DodecahedronGeometry(0.55, 0);
 const KI_RING = new THREE.TorusGeometry(0.6, 0.028, 8, 64);
 // crisp cel-shaded energy shader: white-hot centre, hard colour bands, bright rim, swirling energy
 function kiMat(e){
@@ -1810,7 +1939,7 @@ function updateProjectiles(dt){
     const dx = p.g.position.x - tp.x, dy = p.g.position.y - (tp.y + 0.75), dz = p.g.position.z - tp.z;
     let done = false;
     const rr = 1.0 * Math.max(1, p.sc*0.8);
-    const atk = { dmg:p.dmg, kb:p.kb, launch:p.launch, heavy:p.heavy };
+    const atk = { dmg:p.dmg, kb:p.kb, launch:p.launch, heavy:p.heavy, freeze:p.freeze, slow:p.e.slow };
     const fx = Math.sin(t.root.rotation.y), fz = Math.cos(t.root.rotation.y);
     const facing = fx*p.vel.x + fz*p.vel.z < 0;   // shot is coming at the defender's front
     const perfect = t.deflectT > 0.14;           // charged blasts need perfect timing
@@ -1882,8 +2011,9 @@ el.addEventListener('mousedown', e => {
   if (!locked()){ const r = el.requestPointerLock && el.requestPointerLock({ unadjustedMovement:true }); if (r && r.catch) r.catch(() => el.requestPointerLock()); return; }   // raw mouse input, no OS acceleration   // first click only grabs the mouse
   if (e.button === 0) mouseBtn.shoot = true;
   if (e.button === 2) mouseBtn.deflect = true;
+  if (e.button === 1){ e.preventDefault(); mouseBtn.special = true; }
 });
-addEventListener('mouseup', e => { if (e.button === 0) mouseBtn.shoot = false; if (e.button === 2) mouseBtn.deflect = false; });
+addEventListener('mouseup', e => { if (e.button === 1) mouseBtn.special = false; if (e.button === 0) mouseBtn.shoot = false; if (e.button === 2) mouseBtn.deflect = false; });
 document.addEventListener('pointerlockchange', () => { if (!locked()){ mouseBtn.shoot = mouseBtn.deflect = false; } });
 el.addEventListener('pointerdown', e => { if (!gameMode && e.pointerType !== 'mouse' || e.pointerType === 'touch'){ dragging = true; lx = e.clientX; ly = e.clientY; } });
 addEventListener('pointerup', () => dragging = false);
@@ -1988,7 +2118,7 @@ function loopBody(){
       moveFighter(p2f, p1f, inMenu ? NO_INPUT : readInput(1), gdt, false);
     }
   }
-  separate(); updateSparks(dt); updateWalls(gdt); updateProjectiles(gdt); updateDmg(dt);
+  separate(); updateSparks(dt); updateWalls(gdt); updateSpecials(gdt); updateProjectiles(gdt); updateDmg(dt);
   updateCamera(dt); updateAimDot();
   padTimer += dt; if (padTimer > 1) { padTimer = 0; updatePads(); }
   renderer.render(scene, camera);
