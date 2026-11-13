@@ -600,6 +600,7 @@ const LEVELS = {
 const menuEl = document.getElementById('menu'), menuBtns = document.getElementById('menuBtns'), menuSub = document.getElementById('menuSub');
 let menuItems = [], menuSel = 0, menuPage = 'mode';
 function showMenu(page){
+  if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock();
   menuPage = page; menuEl.style.display = 'flex'; menuBtns.innerHTML = '';
   netStop();
   const opts = page === 'mode'
@@ -613,16 +614,16 @@ function showMenu(page){
   if (page === 'controls'){
     const rows = [
       ['Move', 'Left stick', 'W A S D', 'Arrow keys'],
-      ['Look / aim', 'Right stick', 'Drag with mouse', '—'],
+      ['Look / aim', 'Right stick', 'Move mouse (click game first, Esc frees mouse)', '—'],
       ['Zoom camera', 'D-pad up / down', 'Mouse wheel', '—'],
       ['Reset camera', 'Click right stick', '—', '—'],
       ['Jump', 'A', 'Space', 'Enter'],
       ['Punch (×3 combo)', 'X', 'J', 'Num 1'],
       ['Heavy kick', 'Y', 'K', 'Num 2'],
       ['Roll / dodge', 'B or RB', 'L', 'Num 3'],
-      ['Fireball (tap ×3 combo)', 'RT', 'I', 'Num 4'],
-      ['Charged mega blast', 'Hold RT, release', 'Hold I, release', 'Hold Num 4'],
-      ['Deflect', 'LB', 'O', 'Num 5'],
+      ['Fireball (tap ×3 combo)', 'RT', 'Left click or I', 'Num 4'],
+      ['Charged mega blast', 'Hold RT, release', 'Hold left click or I, release', 'Hold Num 4'],
+      ['Deflect', 'LB', 'Right click or O', 'Num 5'],
       ['Fire / ice wall', 'LT', 'E', 'Num 7'],
       ['Mute sound', '—', 'M', '—'],
       ['Menu: choose / select / back', 'Stick · A · B', 'Arrows · Enter · Esc', 'Mouse click']
@@ -708,6 +709,7 @@ function readInput(idx){
     b.deflect ||= pad.buttons[4]?.pressed;   // LB
     b.wall ||= (pad.buttons[6]?.value || 0) > 0.4;   // LT
   }
+  if (idx === 0 && locked()){ b.shoot ||= mouseBtn.shoot; b.deflect ||= mouseBtn.deflect; }
   if (keys[k.l]) x -= 1; if (keys[k.r]) x += 1; if (keys[k.u]) y -= 1; if (keys[k.d]) y += 1;
   const len = Math.hypot(x, y); if (len < 0.18) { x = 0; y = 0; } else if (len > 1) { x /= len; y /= len; }
   return { x, y, ...b };
@@ -1293,9 +1295,23 @@ function separate(){
 // ---------- Third-person camera behind Player 1 ----------
 let yawOff = 0, pitch = 0.32, camDist = 5.5, dragging = false, lx = 0, ly = 0;
 const el = renderer.domElement;
-el.addEventListener('pointerdown', e => { dragging = true; lx = e.clientX; ly = e.clientY; });
+// Mouse: click the game to lock the mouse, then just move it to look (Esc frees it).
+// Left click = fireball (tap x3 combo, hold to charge) · right click = deflect.
+const mouseBtn = { shoot:false, deflect:false };
+const locked = () => document.pointerLockElement === el;
+el.addEventListener('contextmenu', e => e.preventDefault());
+el.addEventListener('mousedown', e => {
+  if (!gameMode) return;
+  if (!locked()){ el.requestPointerLock && el.requestPointerLock(); return; }   // first click only grabs the mouse
+  if (e.button === 0) mouseBtn.shoot = true;
+  if (e.button === 2) mouseBtn.deflect = true;
+});
+addEventListener('mouseup', e => { if (e.button === 0) mouseBtn.shoot = false; if (e.button === 2) mouseBtn.deflect = false; });
+document.addEventListener('pointerlockchange', () => { if (!locked()){ mouseBtn.shoot = mouseBtn.deflect = false; } });
+el.addEventListener('pointerdown', e => { if (!gameMode && e.pointerType !== 'mouse' || e.pointerType === 'touch'){ dragging = true; lx = e.clientX; ly = e.clientY; } });
 addEventListener('pointerup', () => dragging = false);
 addEventListener('pointermove', e => {
+  if (locked()){ yawOff -= e.movementX*0.0028; pitch += e.movementY*0.0022; return; }
   if (!dragging) return;
   yawOff -= (e.clientX - lx)*0.006; pitch += (e.clientY - ly)*0.004; lx = e.clientX; ly = e.clientY;
 });
@@ -1310,7 +1326,7 @@ function updateCamera(dt){
     camDist += ((pad.buttons[13]?.pressed?1:0) - (pad.buttons[12]?.pressed?1:0))*dt*6;   // D-pad up/down zoom
     if (pad.buttons[11]?.pressed) { yawOff = 0; pitch = 0.32; } // click right stick to reset
   }
-  if (!dragging && !(pad && Math.abs(pad.axes[2]||0) > 0.15)) yawOff *= Math.pow(0.15, dt); // drift back behind the player
+  if (!dragging && !locked() && !(pad && Math.abs(pad.axes[2]||0) > 0.15)) yawOff *= Math.pow(0.15, dt); // drift back behind the player
   pitch = Math.min(1.0, Math.max(0.05, pitch));
   camDist = Math.min(12, Math.max(3, camDist));
   const mp = (ME || p1f).root.position, tp2 = (THEM || p2f).root.position;
