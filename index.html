@@ -60,6 +60,8 @@
   #tut .st { font-size:11px; letter-spacing:1px; color:#ffd23f; font-weight:700; }
   #tut .tt { font-size:19px; font-weight:800; margin:2px 0 6px; }
   #tut .ln { margin:2px 0; } #tut .ok { color:#7dff8a; font-weight:800; }
+  #radar { position:fixed; right:16px; bottom:16px; width:150px; height:150px; border-radius:50%; background:rgba(10,14,24,.55); border:2px solid rgba(255,255,255,.6); z-index:4; pointer-events:none; display:none; }
+  #lowhp { position:fixed; inset:0; pointer-events:none; z-index:3; opacity:0; box-shadow:inset 0 0 140px 30px rgba(220,20,20,.75); }
   #aim { position:fixed; width:6px; height:6px; margin:-3px 0 0 -3px; border-radius:50%; background:rgba(255,255,255,.75);
     box-shadow:0 0 0 1.5px rgba(0,0,0,.45); pointer-events:none; z-index:3; display:none; }
   #ko { position:fixed; left:50%; top:38%; transform:translate(-50%,-50%); font:clamp(60px,12vw,140px) Impact, sans-serif; color:#ffd23f;
@@ -78,6 +80,8 @@
 </div>
 <div id="aim"></div>
 <div id="tut"></div>
+<canvas id="radar" width="150" height="150"></canvas>
+<div id="lowhp"></div>
 <div id="ko">K.O.</div>
 <div id="menu"><div class="box">
   <h1>ELEMENTAL DUEL</h1>
@@ -784,7 +788,9 @@ function updateItems(dt){
     if (me.speedT > 0) b.push('🟡 SPEED ' + Math.ceil(me.speedT) + 's');
     if (me.shieldHits > 0) b.push('⚪ SHIELD ×' + me.shieldHits);
     if (me.freeMagicT > 0) b.push('🟣 MAGIC ∞ ' + Math.ceil(me.freeMagicT) + 's');
-    lbl.textContent = b.length ? b.join(' · ') : 'HEALTH · ENERGY';
+    const pad = usingPad(), cd = (k, v) => k + ' ' + (v > 0 ? Math.ceil(v) + 's' : '✓');
+    const cds = [cd(pad ? 'RB' : 'Q', me.scd || 0), cd(pad ? '◀▶' : 'F', me.s2cd || 0), cd(pad ? 'LT' : 'E', me.wcd || 0)].join(' · ');
+    lbl.textContent = (b.length ? b.join(' · ') + '  |  ' : '') + cds;
   }
 }
 // ---------- Elements: choose your power; each element has its own special move ----------
@@ -895,7 +901,29 @@ function earthSlam(f){
   SPECIALS.push({ kind:'quake', ring, spikes:[], t:0.6 });
   for (const t of specialFoes(f)) if (t.iframes === 0 && t.root.position.distanceTo(c) < 4.5) hit(t, { dmg:9, kb:8, launch:6, heavy:true, el:'earth' }, t.root.position.clone().sub(c).setY(0).normalize());
 }
+// ---------- Radar mini-map (bottom right): enemies, items, jump pads, springs, crystals ----------
+function drawRadar(){
+  const rc = document.getElementById('radar'), low = document.getElementById('lowhp');
+  const me = isNet() ? ME : p1f;
+  if (!gameMode || !me){ rc.style.display = 'none'; low.style.opacity = 0; return; }
+  rc.style.display = 'block';
+  low.style.opacity = me.hp > 0 && me.hp < 25 ? (0.55 + Math.sin(performance.now()/180)*0.35) : 0;   // red pulse when low on health
+  const g = rc.getContext('2d'), R = 75, sc = R/45, cd = new THREE.Vector3(); camera.getWorldDirection(cd);
+  const fl = Math.hypot(cd.x, cd.z) || 1, fx = cd.x/fl, fz = cd.z/fl, mx = me.root.position.x, mz = me.root.position.z;
+  const P = (x, z, clamp) => { const dx = (x - mx)*sc, dz = (z - mz)*sc; let sx = -dx*fz + dz*fx, sy = -(dx*fx + dz*fz); const d = Math.hypot(sx, sy);
+    if (d > R - 6){ if (!clamp) return null; sx *= (R - 6)/d; sy *= (R - 6)/d; } return [R + sx, R + sy]; };
+  const dot = (p, r, c) => { if (!p) return; g.fillStyle = c; g.beginPath(); g.arc(p[0], p[1], r, 0, 7); g.fill(); };
+  g.clearRect(0, 0, 150, 150);
+  g.strokeStyle = 'rgba(255,255,255,.18)'; g.beginPath(); g.arc(R, R, R*0.5, 0, 7); g.stroke();
+  PADS.forEach(p => dot(P(p.x, p.z), 2.5, '#ffd23f'));
+  SPRINGS.forEach(s => dot(P(s.x, s.z), 4, '#5fe3c0'));
+  CRYSTALS.forEach(c => { if (!c.dead) dot(P(c.x, c.z), 2.5, '#ff5be0'); });
+  ITEMS.forEach(it => dot(P(it.g.position.x, it.g.position.z), 2.5, '#' + it.type.c.toString(16).padStart(6, '0')));
+  FIGHTERS.forEach(f => { if (f === me || !f.active || f.hp <= 0) return; dot(P(f.root.position.x, f.root.position.z, true), 5, '#' + EL_TINT_HEX[f.element].toString(16).padStart(6, '0')); dot(P(f.root.position.x, f.root.position.z, true), 2, '#fff'); });
+  g.fillStyle = '#fff'; g.beginPath(); g.moveTo(R, R - 7); g.lineTo(R - 5, R + 5); g.lineTo(R + 5, R + 5); g.closePath(); g.fill();   // you (pointing where the camera looks)
+}
 function elementMove(f){
+  if (TUT && f === p1f) TUT.rolled = true;
   const el = f.element;
   if (el === 'storm'){   // BLINK
     const p = f.root.position, L = AW/2 - 1.6;
@@ -1550,6 +1578,9 @@ function resetFighters(){
   for (const s of shots) scene.remove(s.g); shots.length = 0;
   for (const w of walls) scene.remove(w.g); walls.length = 0;
   ITEMS.forEach(it => scene.remove(it.g)); ITEMS.length = 0; itemT = 3;
+  SPECIALS.forEach(s => { [s.g, s.m, s.ring, s.outer].forEach(x => x && x.parent && x.parent.remove(x)); (s.meshes || []).forEach(q => scene.remove(q.m)); (s.spikes || []).forEach(q => scene.remove(q)); }); SPECIALS.length = 0;
+  FIGHTERS.forEach(f => { if (f.iceBlock){ f.root.remove(f.iceBlock); f.iceBlock = null; } f.frozen = 0; f.slowT = 0; f.scd = f.s2cd = 0; });
+  camBase = null;
   FIGHTERS.forEach(f => { f.powerT = f.speedT = f.freeMagicT = 0; f.shieldHits = 0; f.ult = 0; f.armorT = 0; f.slam = false; });
   p1f.net = p2f.net = null;
 }
@@ -1889,6 +1920,7 @@ function hit(o, atk, dir){
   if (atk.el && STRONG[atk.el] === o.element){ atk = Object.assign({}, atk, { dmg:Math.round(atk.dmg*1.25) }); dmgText(o.root.position, 'SUPER EFFECTIVE', '#ffd23f'); }
   if (o.armorT > 0) atk = Object.assign({}, atk, { dmg:Math.max(1, Math.round(atk.dmg*0.5)), launch:0 });
   { const a = nearestFoe(o); if (a && a !== o) a.ult = Math.min(100, (a.ult || 0) + atk.dmg*1.2); o.ult = Math.min(100, (o.ult || 0) + atk.dmg*0.5); }
+  if (o === (isNet() ? ME : p1f)){ try { const gp = [...navigator.getGamepads()].find(Boolean); gp && gp.vibrationActuator && gp.vibrationActuator.playEffect('dual-rumble', { duration:atk.heavy ? 220 : 90, strongMagnitude:atk.heavy ? 0.8 : 0.35, weakMagnitude:0.5 }); } catch(e){} }
   if (o.shieldHits > 0 && !o.remote){ o.shieldHits--; atk = Object.assign({}, atk, { dmg:Math.max(1, Math.round(atk.dmg*0.2)), kb:atk.kb*0.3, launch:0, heavy:false, freeze:false }); dmgText(o.root.position, 'SHIELD ' + o.shieldHits, '#ffffff'); }
   if (o.frozen > 0 && !atk.freeze){   // hitting a frozen enemy deals bonus damage; a heavy hit shatters the ice
     atk = Object.assign({}, atk, { dmg:atk.dmg + (atk.heavy ? 8 : 3) });
@@ -2526,7 +2558,7 @@ function loopBody(){
       moveFighter(p2f, p1f, inMenu ? NO_INPUT : readInput(1), gdt, false);
     }
   }
-  separate(); updateSparks(dt); updateWalls(gdt); updateSpecials(gdt); updateItems(gdt); updateWorld(gdt); updateProjectiles(gdt); updateDmg(dt);
+  separate(); updateSparks(dt); updateWalls(gdt); updateSpecials(gdt); updateItems(gdt); updateWorld(gdt); drawRadar(); updateProjectiles(gdt); updateDmg(dt);
   updateCamera(dt); updateAimDot();
   padTimer += dt; if (padTimer > 1) { padTimer = 0; updatePads(); }
   renderer.render(scene, camera);
