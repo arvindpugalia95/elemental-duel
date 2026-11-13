@@ -521,7 +521,7 @@ const p1f = makeFighter('fire', 0xff5a2a, new THREE.Vector3(0, 0, 8), hpEls[0]);
 const p2f = makeFighter('ice',  0x3a9be0, new THREE.Vector3(0, 0, -6), hpEls[1], window.ED_ASSETS.characters.ch45 ? 'ch45' : 'ch24');
 const p3f = makeFighter('earth', 0x4fc24a, new THREE.Vector3(8, 0, 1), hpEls[2], 'ch24');
 const p4f = makeFighter('storm', 0xa45cff, new THREE.Vector3(-8, 0, 1), hpEls[3], window.ED_ASSETS.characters.ch45 ? 'ch45' : 'ch24');
-const FIGHTERS = [p1f, p2f, p3f, p4f], FIGHTER_NAMES = ['Kaen', 'Hyoga', 'Gaia', 'Raiden'];
+const FIGHTERS = [p1f, p2f, p3f, p4f], FIGHTER_NAMES = ['Kaen', 'Hyoga', 'Gaia', 'Raiden'], ENEMIES = [p2f, p3f, p4f];
 FIGHTERS.forEach((f, i) => { f.pid = i; f.mpEl = mpEls[i]; f.active = i < 2; f.root.visible = f.active; });
 // nearest living opponent (works for 1 vs 1 and free-for-all)
 function nearestFoe(f){
@@ -585,6 +585,81 @@ function aiInput(){
   }
   if (Math.random() < 0.004) out.jump = true;
   return out;
+}
+function aiFor(f, tgt, L, dt){   // CPU brain for any fighter (used for survival enemies)
+  const a = f.ai || (f.ai = { mode:'approach', t:0, side:1, pulse:{}, dodged:new WeakSet(), hold:0 });
+  const out = { x:0, y:0, jump:false, roll:false, punch:false, kick:false, shoot:false, deflect:false, wall:false };
+  if (!f.ready || !tgt.ready || f.hp <= 0 || tgt.hp <= 0) return out;
+  const d = Math.hypot(tgt.root.position.x - f.root.position.x, tgt.root.position.z - f.root.position.z);
+  const tap = k => { if (!a.pulse[k]) { out[k] = true; } a.pulse[k] = !a.pulse[k]; };
+  a.t -= dt;
+  if (a.t <= 0){
+    const r = Math.random();
+    if (d > 10)      a.mode = r < 0.45 ? 'shoot' : r < 0.6 ? 'charge' : 'approach';
+    else if (d > 3.2) a.mode = r < 0.35 ? 'approach' : r < 0.65 ? 'shoot' : 'strafe';
+    else             a.mode = r < 0.6 ? 'melee' : r < 0.75 ? 'heavy' : r < 0.9 ? 'retreat' : 'strafe';
+    a.t = L.think*(0.6 + Math.random()*0.8); a.side = Math.random() < 0.5 ? -1 : 1; a.hold = 0;
+  }
+  // dodge incoming fireballs sometimes
+  for (const s of shots){
+    if (s.owner !== tgt || a.dodged.has(s)) continue;
+    const dx = s.g.position.x - f.root.position.x, dz = s.g.position.z - f.root.position.z;
+    if (dx*dx + dz*dz < 40){ a.dodged.add(s); const r = Math.random();
+      if (r < L.deflect){ out.deflect = true; return out; }
+      if (r < L.deflect + L.wall && f.wcd === 0){ out.wall = true; return out; }
+      if (r < L.deflect + L.dodge){ out.roll = true; out.x = a.side; return out; } }
+  }
+  switch (a.mode){
+    case 'approach': out.y = -1; out.x = a.side*0.35; break;
+    case 'retreat':  out.y = 1;  out.x = a.side*0.5; if (Math.random() < 0.03) tap('shoot'); break;
+    case 'strafe':   out.x = a.side; out.y = d > 6 ? -0.3 : 0.2; if (Math.random() < 0.04) tap('shoot'); break;
+    case 'shoot':    out.x = a.side*0.6; if (Math.random() < L.shoot) tap('shoot'); break;
+    case 'charge':   a.hold += dt; out.shoot = a.hold < 1.1; if (!out.shoot) a.t = 0; break;
+    case 'melee':    out.y = d > 2 ? -1 : 0; if (d < 2.6 && Math.random() < L.melee) tap('punch'); break;
+    case 'heavy':    out.y = d > 2 ? -1 : 0; if (d < 2.6) { tap('kick'); a.t = Math.min(a.t, 0.3); } break;
+  }
+  if (Math.random() < 0.004) out.jump = true;
+  return out;
+}
+
+// ---------- Survival mode: waves of CPU enemies keep spawning, fight as long as you can ----------
+let SURV = null;
+function survLevel(){ const w = SURV ? SURV.wave : 1; return w <= 2 ? LEVELS.Easy : w <= 5 ? LEVELS.Normal : LEVELS.Hard; }
+function spawnWave(){
+  const S = SURV; S.wave++;
+  const n = Math.min(3, 1 + Math.floor((S.wave - 1) / 2));   // 1, 1, 2, 2, 3, 3...
+  p1f.hp = Math.min(100, p1f.hp + 25); p1f.hpEl.style.width = p1f.hp + '%';   // small heal between waves
+  const labels = document.querySelectorAll('.bar b');
+  ENEMIES.forEach((e, i) => {
+    if (i >= n) return;
+    const ang = Math.random()*Math.PI*2, r = 22 + Math.random()*8;
+    e.root.position.set(Math.cos(ang)*r, 0, Math.sin(ang)*r);
+    e.hp = Math.min(100, 50 + S.wave*8); e.hpEl.style.width = e.hp + '%'; e.mp = 100;
+    e.active = true; e.root.visible = true; e.counted = false; e.deadT = 0; e.ai = null;
+    e.stun = 0; e.busy = 0; e.down = false; e.flying = false; e.vel.set(0,0,0); e.vy = 0;
+    if (e.ready) play(e, 'Idle', 0.2, true);
+    labels[e.pid].textContent = 'Enemy ' + (i + 1) + ' · ' + FIGHTER_NAMES[e.pid];
+  });
+  document.querySelector('.bar.l2').style.display = p3f.active ? 'block' : 'none';
+  document.querySelector('.bar.r2').style.display = p4f.active ? 'block' : 'none';
+  dmgText(p1f.root.position, 'WAVE ' + S.wave, '#ffd23f'); sfx.wall('fire');
+}
+function survivalTick(dt){
+  const S = SURV; if (!S) return;
+  const koEl = document.getElementById('ko');
+  if (p1f.hp <= 0){
+    if (S.over == null){ S.over = 3; koEl.textContent = 'GAME OVER'; koEl.style.display = 'block'; sfx.ko(); }
+    S.over -= dt;
+    if (S.over <= 0){ koEl.style.display = 'none'; koEl.textContent = 'K.O.'; SURV = null; gameMode = null; resetFighters(); showMenu('mode'); }
+    return;
+  }
+  for (const e of ENEMIES){
+    if (!e.active || e.hp > 0) continue;
+    if (!e.counted){ e.counted = true; S.kills++; }
+    e.deadT += dt; if (e.deadT > 2){ e.active = false; e.root.visible = false; }
+  }
+  if (!ENEMIES.some(e => e.active)){ S.next -= dt; if (S.next <= 0){ spawnWave(); S.next = 3; } }
+  document.getElementById('score').textContent = 'Wave ' + S.wave + ' · Kills ' + S.kills + (S.best ? ' · Best ' + S.best : '');
 }
 // ---------- Online multiplayer (peer-to-peer via PeerJS, auto matchmaking) ----------
 let NET = null, ME = null, THEM = null, netSendT = 0, netSearch = 0;
@@ -931,7 +1006,7 @@ function showMenu(page){
   menuPage = page; menuEl.style.display = 'flex'; menuBtns.innerHTML = '';
   if (page !== 'browse') netStop();
   const opts = page === 'mode'
-    ? [['Vs CPU', () => showMenu('level')], ['2 Players', () => startGame('2p')], ['Online', () => showMenu('online')], ['Controls', () => showMenu('controls')]]
+    ? [['Vs CPU', () => showMenu('level')], ['Survival (waves of enemies)', () => startGame('survival')], ['2 Players', () => startGame('2p')], ['Online', () => showMenu('online')], ['Controls', () => showMenu('controls')]]
     : page === 'controls'
     ? [['Back', () => showMenu('mode')]]
     : page === 'online'
@@ -1017,6 +1092,11 @@ function startGame(mode, level){
     document.querySelector('.bar.r b').textContent = 'Hyoga · ' + (NET.host ? NET.opp : NET.name) + (NET.host ? '' : ' (you)');
   }
   menuEl.style.display = 'none'; resetFighters();
+  if (mode === 'survival'){
+    FIGHTERS.forEach((f, i) => { f.active = i === 0; f.root.visible = f.active; });
+    SURV = { wave:0, kills:0, next:1.2 };
+    document.querySelector('.bar.r b').textContent = 'Enemy';
+  }
 }
 let padPrev = {};
 function menuPad(){
@@ -1659,7 +1739,7 @@ function updateProjectiles(dt){
       if (inWall(w, p.g.position, 0.35*p.sc)){ w.hp -= 1; w.flash = 0.1; send({ t:'wallHit', wid:w.wid }); send({ t:'shotEnd', sid:p.sid, pos:[p.g.position.x, p.g.position.y, p.g.position.z], big:false }); explode(p.g.position, p.e, false, p.sc); if (w.el !== p.owner.element) sfx.sizzle(); blocked = true; break; }
     }
     if (blocked){ scene.remove(p.g); p.body.material.dispose(); p.glow.material.dispose(); shots.splice(i, 1); continue; }
-    if (gameMode === 'ffa'){ const nt = nearestFoeTo(p.g.position, p.owner); if (nt) p.target = nt; }
+    if (gameMode === 'ffa' || (gameMode === 'survival' && p.owner === p1f)){ const nt = nearestFoeTo(p.g.position, p.owner); if (nt) p.target = nt; }
     const t = p.target, tp = t.root.position;
     const dx = p.g.position.x - tp.x, dy = p.g.position.y - (tp.y + 0.75), dz = p.g.position.z - tp.z;
     let done = false;
@@ -1812,7 +1892,7 @@ function loopBody(){
   if (inMenu) menuPad();
   // K.O. -> back to the menu
   const actF = FIGHTERS.filter(f => f.active), aliveF = actF.filter(f => f.hp > 0);
-  if (gameMode && actF.length >= 2 && aliveF.length <= 1){
+  if (gameMode && gameMode !== 'survival' && actF.length >= 2 && aliveF.length <= 1){
     if (koTimer === 0){ document.getElementById('ko').style.display = 'block'; sfx.ko();
       if (aliveF[0]) SCORE[aliveF[0].pid] = (SCORE[aliveF[0].pid] || 0) + 1;
       document.getElementById('score').textContent = actF.length === 2 ? 'Kaen ' + (SCORE[0]||0) + ' – ' + (SCORE[1]||0) + ' Hyoga'
@@ -1827,8 +1907,15 @@ function loopBody(){
     for (const f of FIGHTERS) if (f.active && f.remote) updatePuppet(f, gdt);
     netSendT += dt; if (netSendT > 1/30){ netSendT = 0; sendState(); }
   } else {
-    moveFighter(p1f, p2f, inMenu ? NO_INPUT : readInput(0), gdt, true);
-    moveFighter(p2f, p1f, inMenu ? NO_INPUT : readInput(1), gdt, false);
+    if (gameMode === 'survival'){
+      THEM = nearestFoe(p1f);
+      moveFighter(p1f, THEM, readInput(0), gdt, true);
+      for (const e of ENEMIES) if (e.active) moveFighter(e, p1f, aiFor(e, p1f, survLevel(), gdt), gdt, false);
+      survivalTick(dt);
+    } else {
+      moveFighter(p1f, p2f, inMenu ? NO_INPUT : readInput(0), gdt, true);
+      moveFighter(p2f, p1f, inMenu ? NO_INPUT : readInput(1), gdt, false);
+    }
   }
   separate(); updateSparks(dt); updateWalls(gdt); updateProjectiles(gdt); updateDmg(dt);
   updateCamera(dt); updateAimDot();
