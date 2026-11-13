@@ -1171,7 +1171,7 @@ function shoot(owner, target, pos, dir, opt = {}){
   r2.scale.setScalar(0.85);
   const streak = add(KI_STREAK, e.c[1], 0.28); streak.rotation.x = -Math.PI/2; streak.position.z = -1.6;
   const streak2 = add(KI_STREAK, 0xffffff, 0.22); streak2.rotation.x = -Math.PI/2; streak2.position.z = -1.0; streak2.scale.set(0.45, 0.6, 0.45);
-  body.add(shell, shell2);   // just the sphere: no rings, streaks or halo body.userData.shell = shell; body.userData.shell2 = shell2; body.userData.r1 = r1; body.userData.r2 = r2;
+  body.add(shell, shell2); body.userData.shell = shell; body.userData.shell2 = shell2; body.userData.r1 = r1; body.userData.r2 = r2;
   const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:e.c[2], transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0 }));
   glow.scale.setScalar(1.7*sc); body.scale.setScalar(sc);
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:0xffffff, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.0 }));
