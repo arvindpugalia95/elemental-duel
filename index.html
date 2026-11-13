@@ -23,6 +23,8 @@
   .hp { height:10px; background:rgba(0,0,0,.5); border-radius:3px; margin-top:4px; overflow:hidden; }
   .hp i { display:block; height:100%; width:100%; }
   .l .hp i { background:#e8552e; } .r .hp i { background:#3a9be0; margin-left:auto; }
+  .mp { height:5px; width:72%; background:rgba(0,0,0,.5); border-radius:3px; margin-top:3px; overflow:hidden; } .r .mp { margin-left:auto; }
+  .mp i { display:block; height:100%; width:100%; background:linear-gradient(90deg,#6fd3ff,#e9fbff); transition:width .1s; } .r .mp i { margin-left:auto; }
   .tip { position:absolute; bottom:calc(env(safe-area-inset-bottom,0px) + 14px); font-size:12px; color:#fff;
     background:rgba(0,0,0,.55); padding:6px 12px; border-radius:14px; white-space:nowrap; }
   #pads { left:16px; } #help { right:16px; }
@@ -54,9 +56,9 @@
 </head>
 <body>
 <div id="hud">
-  <div class="bar l"><b>Kaen</b><div class="hp"><i></i></div></div>
-  <div id="round"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="sep"></span><span class="dot"></span><span class="dot"></span></div><small>Round 1 · Best of 3</small></div>
-  <div class="bar r"><b>Hyoga</b><div class="hp"><i></i></div></div>
+  <div class="bar l"><b>Kaen</b><div class="hp"><i></i></div><div class="mp"><i></i></div></div>
+  <div id="round"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="sep"></span><span class="dot"></span><span class="dot"></span></div><small id="score">Kaen 0 – 0 Hyoga</small></div>
+  <div class="bar r"><b>Hyoga</b><div class="hp"><i></i></div><div class="mp"><i></i></div></div>
   <div id="pads" class="tip">No controller found – press any button on your controller</div>
   <div id="help" class="tip">X×3 combo · Y heavy kick · RT tap×3 fire combo · hold RT charge · LT wall · LB deflect · B roll · A jump</div>
 </div>
@@ -391,7 +393,7 @@ function masterClips(){
 const ELEMENT_TINT = { fire:0xffd6cc, ice:0xd2e6ff };
 function makeFighter(element, tint, startPos, hpEl, charKey = 'ch24'){
   const f = { root:new THREE.Group(), vel:new THREE.Vector3(), vy:0, onGround:true, mixer:null, actions:{}, cur:null, ready:false,
-              element, cd:0, busy:0, hitDone:true, mats:[], flash:0, deflectT:0, dcd:0, wcd:0, comboT:0, chainT:0, chain:0, sinceRoll:9, holdT:0, charge:0, charging:false, down:false, hitSide:false, hp:100, hpEl, prev:{}, combo:0, stun:0, iframes:0, rollDir:new THREE.Vector3() };
+              element, cd:0, busy:0, hitDone:true, mats:[], flash:0, deflectT:0, dcd:0, wcd:0, comboT:0, chainT:0, chain:0, sinceRoll:9, holdT:0, charge:0, charging:false, down:false, hitSide:false, hp:100, mp:100, hpEl, prev:{}, combo:0, stun:0, iframes:0, rollDir:new THREE.Vector3() };
   f.root.position.copy(startPos); scene.add(f.root);
   f.aura = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.15, 48), new THREE.MeshBasicMaterial({ color:tint, transparent:true, opacity:0.55, side:THREE.DoubleSide }));
   f.aura.rotation.x = -Math.PI/2; f.aura.position.y = 0.03; f.aura.scale.setScalar(0.65); f.root.add(f.aura);
@@ -475,7 +477,12 @@ function play(f, name, fade=0.15, restart=false){
   if (f.cur && f.cur !== name) f.actions[f.cur].crossFadeTo(next, fade, false);
   f.cur = name;
 }
-const hpEls = document.querySelectorAll('.hp i');
+const hpEls = document.querySelectorAll('.hp i'), mpEls = document.querySelectorAll('.mp i');
+const SCORE = [0, 0];
+function noEnergy(f){   // not enough energy: short message, no shot
+  if (performance.now() - (f.neT || 0) > 700){ f.neT = performance.now(); dmgText(f.root.position, 'NO ENERGY', '#9fc4dc'); }
+  return true;
+}
 const p1f = makeFighter('fire', 0xff5a2a, new THREE.Vector3(0, 0, 8), hpEls[0]);
 const p2f = makeFighter('ice',  0x3a9be0, new THREE.Vector3(0, 0, -6), hpEls[1], window.ED_ASSETS.characters.ch45 ? 'ch45' : 'ch24');
 const p1 = p1f.root, p2 = p2f.root;
@@ -649,7 +656,7 @@ function sendState(){
   const f = ME, r = f.root;
   send({ t:'s', p:[+r.position.x.toFixed(3), +r.position.y.toFixed(3), +r.position.z.toFixed(3)], r:+r.rotation.y.toFixed(3),
     a:f.cur, n:f.animN || 0, ts:f.cur && f.actions[f.cur] ? +f.actions[f.cur].getEffectiveTimeScale().toFixed(2) : 1,
-    hp:f.hp, i:f.iframes > 0 ? 1 : 0, d:+f.deflectT.toFixed(3), dn:f.down ? 1 : 0, ch:f.charging ? +f.charge.toFixed(2) : -1, tl:f.pivot ? +f.pivot.rotation.x.toFixed(2) : 0 });
+    hp:f.hp, mp:Math.round(f.mp ?? 100), i:f.iframes > 0 ? 1 : 0, d:+f.deflectT.toFixed(3), dn:f.down ? 1 : 0, ch:f.charging ? +f.charge.toFixed(2) : -1, tl:f.pivot ? +f.pivot.rotation.x.toFixed(2) : 0 });
 }
 function updatePuppet(f, dt){
   const m = f.net; if (!f.ready){ return; }
@@ -659,6 +666,7 @@ function updatePuppet(f, dt){
     let d = m.r - f.root.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d)); f.root.rotation.y += d*k;
     if (m.a && (m.a !== f.cur || m.n !== f.lastN)){ f.lastN = m.n; const before = f.animN; play(f, m.a, 0.08, true); f.animN = before; }
     if (f.cur && f.actions[f.cur]) f.actions[f.cur].setEffectiveTimeScale(m.ts || 1);
+    if (m.mp != null){ f.mp = m.mp; const mpb = f === p1f ? mpEls[0] : mpEls[1]; if (mpb) mpb.style.width = f.mp + '%'; }
     if (m.hp !== f.hp){ f.hp = m.hp; f.hpEl.style.width = f.hp + '%'; }
     f.iframes = m.i ? 1 : 0; f.deflectT = m.d; f.down = !!m.dn;
     f.charging = m.ch >= 0; f.charge = Math.max(0, m.ch);
@@ -705,9 +713,10 @@ function showMenu(page){
       ['Punch (×3 combo)', 'X', 'J', 'Num 1'],
       ['Heavy kick', 'Y', 'K', 'Num 2'],
       ['Roll / dodge', 'B or RB', 'L', 'Num 3'],
-      ['Fireball (tap ×3 combo)', 'RT', 'Left click or I', 'Num 4'],
+      ['Fireball (tap ×3 combo) · costs energy', 'RT', 'Left click (far away) or I', 'Num 4'],
+      ['Punch / kick combo when close', 'X / Y', 'Left click (close up) or J / K', 'Num 1 / 2'],
       ['Charged mega blast', 'Hold RT, release', 'Hold left click or I, release', 'Hold Num 4'],
-      ['Deflect', 'LB', 'Right click or O', 'Num 5'],
+      ['Block (hold) / deflect (tap)', 'LB', 'Right click or O', 'Num 5'],
       ['Fire / ice wall', 'LT', 'E', 'Num 7'],
       ['Mute sound', '—', 'M', '—'],
       ['Menu: choose / select / back', 'Stick · A · B', 'Arrows · Enter · Esc', 'Mouse click']
@@ -736,7 +745,7 @@ function showMenu(page){
 function markSel(){ sfx.click(); menuItems.forEach((m, i) => m.b.classList.toggle('sel', i === menuSel)); }
 function resetFighters(){
   [[p1f, 0, 8], [p2f, 0, -6]].forEach(([f, x, z]) => {
-    f.hp = 100; f.hpEl.style.width = '100%'; f.root.position.set(x, 0, z); f.vel.set(0,0,0); f.vy = 0;
+    f.hp = 100; f.mp = 100; f.hpEl.style.width = '100%'; f.root.position.set(x, 0, z); f.vel.set(0,0,0); f.vy = 0;
     f.stun = 0; f.busy = 0; f.down = false; f.attack = null; f.charging = false; f.charge = 0; f.cd = 0;
     if (f.ready) play(f, 'Idle', 0.2, true);
   });
@@ -794,7 +803,12 @@ function readInput(idx){
     b.deflect ||= pad.buttons[4]?.pressed;   // LB
     b.wall ||= (pad.buttons[6]?.value || 0) > 0.4;   // LT
   }
-  if (idx === 0 && locked()){ b.shoot ||= mouseBtn.shoot; b.deflect ||= mouseBtn.deflect; }
+  if (idx === 0 && locked()){
+    const me = gameMode === 'online' ? ME : p1f, them = me === p1f ? p2f : p1f;
+    const near = me && them && me.root.position.distanceTo(them.root.position) < 3.2;
+    if (near) b.punch ||= mouseBtn.shoot; else b.shoot ||= mouseBtn.shoot;   // close = punch/kick combo, far = magic
+    b.deflect ||= mouseBtn.deflect;
+  }
   if (keys[k.l]) x -= 1; if (keys[k.r]) x += 1; if (keys[k.u]) y -= 1; if (keys[k.d]) y += 1;
   const len = Math.hypot(x, y); if (len < 0.18) { x = 0; y = 0; } else if (len > 1) { x /= len; y /= len; }
   return { x, y, ...b };
@@ -836,6 +850,9 @@ function moveFighter(f, o, inp, dt, isP1){
   f.busy = Math.max(0, f.busy - dt); f.stun = Math.max(0, f.stun - dt); f.iframes = Math.max(0, f.iframes - dt);
   f.comboT -= dt; f.chainT -= dt; f.sinceRoll += dt; f.cd = Math.max(0, f.cd - dt);
   f.deflectT = Math.max(0, f.deflectT - dt); f.dcd = Math.max(0, f.dcd - dt);
+  f.blocking = !!inp.deflect && f.hp > 0 && f.stun === 0 && f.busy === 0;   // hold block = take much less melee damage
+  f.mp = Math.min(100, (f.mp ?? 100) + dt*(f.charging ? 0 : 7));
+  { const mpb = f === p1f ? mpEls[0] : mpEls[1]; if (mpb) mpb.style.width = f.mp + '%'; }
   // deflect: LB / LT opens a short window that bounces fireballs and ice balls back
   if (f.stun === 0 && f.hp > 0 && f.cur !== 'Roll' && f.dcd === 0 && pressed(f, inp, 'deflect')){
     sfx.swing(false); f.deflectT = 0.28; f.dcd = 0.65; f.busy = Math.max(f.busy, 0.3); f.charging = false; f.attack = null;
@@ -851,8 +868,8 @@ function moveFighter(f, o, inp, dt, isP1){
 
   // ---- LT: raise an ice wall / fire wall between you and the enemy ----
   f.wcd = Math.max(0, f.wcd - dt);
-  if (f.stun === 0 && f.busy === 0 && f.hp > 0 && f.onGround && f.wcd === 0 && pressed(f, inp, 'wall')){
-    createWall(f, toOpp); f.wcd = 5; f.busy = 0.35; f.charging = false;
+  if (f.stun === 0 && f.busy === 0 && f.hp > 0 && f.onGround && f.wcd === 0 && pressed(f, inp, 'wall') && !(f.mp < 30 && noEnergy(f))){
+    f.mp -= 30; createWall(f, toOpp); f.wcd = 5; f.busy = 0.35; f.charging = false;
     play(f, f.actions.Interact ? 'Interact' : 'Punch_Left', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(2);
   }
   // ---- dodge roll ----
@@ -883,7 +900,8 @@ function moveFighter(f, o, inp, dt, isP1){
   const canShoot = f.stun === 0 && f.hp > 0 && f.cur !== 'Roll';
   if (inp.shoot && !f.prev.shoot) f.holdT = 0;
   if (inp.shoot) f.holdT += dt;
-  if (canShoot && pressed(f, inp, 'shoot') && f.cd === 0 && f.busy === 0){
+  if (canShoot && pressed(f, inp, 'shoot') && f.cd === 0 && f.busy === 0 && !(f.mp < 12 && noEnergy(f))){
+    f.mp -= 12;
     f.root.rotation.y = Math.atan2(aim.x, aim.z); f.aimYaw = f.root.rotation.y; f.aimT = 0.6;   // face where you shoot
     if (!f.onGround && !f.flying){
       // air: three fireballs in a fan, angled down
@@ -909,7 +927,7 @@ function moveFighter(f, o, inp, dt, isP1){
     }
   }
   // holding RT charges a mega blast
-  if (inp.shoot && f.holdT > 0.35 && canShoot && f.busy === 0 && (f.onGround || f.flying)){
+  if (inp.shoot && f.holdT > 0.35 && f.mp >= 30 && canShoot && f.busy === 0 && (f.onGround || f.flying)){
     f.charging = true; f.aimYaw = Math.atan2(aim.x, aim.z); f.aimT = 0.6;
     f.charge = Math.min(1, (f.holdT - 0.35) / 1.0);
     const hp = handPos(f, aim, 0), e = ELEM[f.element], a = performance.now()/60;
@@ -926,7 +944,7 @@ function moveFighter(f, o, inp, dt, isP1){
     f.charging = false; f.aura.scale.setScalar(1);
     if (canShoot && f.charge > 0.05){
       const c = f.charge;
-      f.aimYaw = Math.atan2(aim.x, aim.z); f.root.rotation.y = f.aimYaw; f.aimT = 0.7;
+      f.mp = Math.max(0, f.mp - 30); f.aimYaw = Math.atan2(aim.x, aim.z); f.root.rotation.y = f.aimYaw; f.aimT = 0.7;
       shoot(f, o, handPos(f, aim, 0), aim, { scale:1.6 + c*1.4, dmg:12 + Math.round(c*16), kb:10 + c*6, launch:8 + c*4, heavy:true, aoe:2.5 + c*2, speed:22 });
       play(f, 'Cast', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(1.2);
       f.busy = 0.45; f.cd = 0.9; f.vel.addScaledVector(aim, -6 - c*6);   // recoil
@@ -939,7 +957,7 @@ function moveFighter(f, o, inp, dt, isP1){
   else if (!f.onGround && !f.flying && f.hp > 0 && f.stun === 0 && pressed(f, inp, 'jump')){ f.flying = true; f.vy = 2; sfx.whoosh(); }   // double jump = fly
 
   // ---- velocity ----
-  const slow = f.charging ? 0.35 : 1;
+  const slow = f.charging || f.blocking ? 0.35 : 1;
   if (f.cur === 'Roll' && f.busy > 0) want.copy(f.rollDir).multiplyScalar(14);
   else if (f.attack && f.attack.name === 'dive' && !f.onGround) want.copy(f.vel);
   else if (f.busy > 0 || f.stun > 0 || f.hp <= 0) want.set(0,0,0);
@@ -1001,6 +1019,7 @@ function moveFighter(f, o, inp, dt, isP1){
 let hitstop = 0;
 function hit(o, atk, dir){
   if (o.hp <= 0) return;
+  if (o.blocking && !o.remote){ atk = { dmg:Math.max(1, Math.round(atk.dmg*0.25)), kb:atk.kb*0.35 }; dmgText(o.root.position, 'BLOCK', '#cfe8ff'); }
   sfx.hit(!!atk.heavy);
   if (o.remote){
     // online: the other player's game applies the damage; show the impact here right away
@@ -1530,7 +1549,10 @@ function loopBody(){
   if (inMenu) menuPad();
   // K.O. -> back to the menu
   if (gameMode && (p1f.hp <= 0 || p2f.hp <= 0)){
-    if (koTimer === 0){ document.getElementById('ko').style.display = 'block'; sfx.ko(); }
+    if (koTimer === 0){ document.getElementById('ko').style.display = 'block'; sfx.ko();
+      if (p1f.hp > 0) SCORE[0]++; else if (p2f.hp > 0) SCORE[1]++;
+      document.getElementById('score').textContent = 'Kaen ' + SCORE[0] + ' – ' + SCORE[1] + ' Hyoga';
+      const dots = document.querySelectorAll('#round .dot'); dots.forEach((d, i) => d.classList.toggle('on', i < 2 ? SCORE[0] > i : SCORE[1] > i - 2)); }
     koTimer += dt;
     if (koTimer > 3){ koTimer = 0; document.getElementById('ko').style.display = 'none'; const wasOnline = gameMode === 'online'; gameMode = null; resetFighters(); showMenu(wasOnline ? 'online' : 'mode'); }
   }
