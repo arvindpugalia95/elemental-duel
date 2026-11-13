@@ -681,9 +681,59 @@ function doSpecial(f, o, aim){
     sfx.charge(f, -1);
   }
 }
+const GEM_GEO = new THREE.OctahedronGeometry(0.42, 0);
+const ULT_DESC = {
+  fire:'FIRE NOVA: 10 fireballs explode out in a ring around you',
+  ice:'DIAMOND STORM: a fan of 7 diamonds; the middle one FREEZES',
+  earth:'EARTHQUAKE: rock spikes burst from the ground and launch everyone near you',
+  storm:'CHAIN LIGHTNING: three lightning bolts strike one after another'
+};
+function doUltimate(f, o, aim){
+  if (TUT && f === p1f) TUT.ultimate = true;
+  const el = f.element, hp = handPos(f, aim, 0);
+  shake = Math.max(shake, 0.3); hitstop = 0.06;
+  if (el === 'fire'){
+    for (let k = 0; k < 10; k++) shoot(f, o, hp.clone(), aim.clone().applyAxisAngle(UP, k/10*Math.PI*2), { scale:0.85, dmg:8, kb:5, speed:26 });
+    puff(f.root.position.clone().setY(1), 0xfff2b0, 3, 0, 0, 0, 0.15);
+  } else if (el === 'ice'){
+    for (let k = -3; k <= 3; k++) shoot(f, o, hp.clone(), aim.clone().applyAxisAngle(UP, k*0.13), { scale:0.95, dmg:6, kb:2, speed:34, diamond:true, freeze:k === 0 });
+  } else if (el === 'earth'){
+    const c = f.root.position;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1.1, 48), new THREE.MeshBasicMaterial({ color:0xc8a070, transparent:true, side:THREE.DoubleSide, depthWrite:false }));
+    ring.rotation.x = -Math.PI/2; ring.position.set(c.x, 0.08, c.z); scene.add(ring);
+    const spikes = [];
+    for (let k = 0; k < 12; k++){
+      const a = k/12*Math.PI*2, r = 2 + (k % 2)*1.6;
+      const sp = new THREE.Mesh(new THREE.ConeGeometry(0.45, 2, 6), new THREE.MeshToonMaterial({ color:k % 2 ? 0x7a5a3c : 0x9a7652, gradientMap:GRAD }));
+      sp.add(new THREE.Mesh(sp.geometry, inkMat(0.004))); sp.position.set(c.x + Math.cos(a)*r, -1, c.z + Math.sin(a)*r); scene.add(sp); spikes.push(sp);
+    }
+    SPECIALS.push({ kind:'quake', ring, spikes, t:1.0 });
+    explodeDust(c, 'earth'); sfx.boom(2, true);
+    for (const t of specialFoes(f)){
+      const d = t.root.position.distanceTo(c);
+      if (d < 7.5 && t.iframes === 0) hit(t, { dmg:13, kb:10, launch:9, heavy:true }, t.root.position.clone().sub(c).setY(0).normalize());
+    }
+  } else {
+    const foes = specialFoes(f).sort((a, b) => a.root.position.distanceToSquared(f.root.position) - b.root.position.distanceToSquared(f.root.position));
+    if (!foes.length){ dmgText(f.root.position, 'NO TARGET', '#d8c8ff'); return; }
+    for (let k = 0; k < 3; k++){
+      const tgt = foes[k % foes.length];
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.75, 32), new THREE.MeshBasicMaterial({ color:0xd8a8ff, transparent:true, opacity:0.9, side:THREE.DoubleSide, depthWrite:false }));
+      ring.rotation.x = -Math.PI/2; ring.position.set(tgt.root.position.x, 0.06, tgt.root.position.z); scene.add(ring);
+      SPECIALS.push({ kind:'bolt', f, tgt, ring, t:0.3 + k*0.35 });
+    }
+  }
+}
 function updateSpecials(dt){
   for (let i = SPECIALS.length - 1; i >= 0; i--){
     const s = SPECIALS[i]; s.t -= dt;
+    if (s.kind === 'quake'){
+      const k = 1 - Math.max(0, s.t)/1.0;
+      s.ring.scale.setScalar(1 + k*9); s.ring.material.opacity = 0.85*(1 - k);
+      s.spikes.forEach(sp => { sp.position.y = k < 0.2 ? -1 + k*7 : 0.4 - (k - 0.2)*1.6; });
+      if (s.t <= 0){ scene.remove(s.ring); s.spikes.forEach(sp => scene.remove(sp)); SPECIALS.splice(i, 1); }
+      continue;
+    }
     if (s.kind === 'laser'){
       const f = s.f, start = handPos(f, s.aim, 0);
       s.g.position.copy(start).addScaledVector(s.aim, s.L/2);
@@ -734,6 +784,7 @@ const TUT_STEPS = [
   { t:'Raise an element wall',pad:'Press LT',                                    kb:'Press E',                                 done:T => T.wall },
   { t:'Dodge roll',           pad:'Press B while moving',                        kb:'Press L while moving',                    done:T => T.rolled },
   { t:'Element special',     pad:'Press RB', kb:'Press Q (or click the middle mouse button)', done:T => T.special },
+  { t:'Combo ultimate',      pad:'Punch the dummy (X), then quickly press RB', kb:'Punch the dummy (left click close / J), then quickly press Q', done:T => T.ultimate },
   { t:'Hover in the air',     pad:'Press A, then A again in the air. Press B to come down', kb:'Press SPACE, then SPACE again in the air. Press C to come down', done:T => T.landedFromFly },
 ];
 function tutorialTick(dt, inp){
@@ -761,7 +812,7 @@ function tutorialTick(dt, inp){
   }
   const s = TUT_STEPS[T.step], pad = usingPad();
   el.innerHTML = '<div class="st">TUTORIAL · STEP ' + (T.step + 1) + ' OF ' + TUT_STEPS.length + '</div><div class="tt">' + s.t + (T.wait > 0 ? ' <span class="ok">✔ Nice!</span>' : '') + '</div>' +
-    (s.t === 'Element special' ? '<div class="ln" style="color:#ffd23f">' + SPECIAL_DESC[p1f.element] + '</div>' : '') + '<div class="ln">🎮 ' + s.pad + '</div><div class="ln">⌨️ ' + s.kb + '</div>';
+    (s.t === 'Element special' ? '<div class="ln" style="color:#ffd23f">' + SPECIAL_DESC[p1f.element] + '</div>' : '') + (s.t === 'Combo ultimate' ? '<div class="ln" style="color:#ffd23f">' + ULT_DESC[p1f.element] + '</div>' : '') + '<div class="ln">🎮 ' + s.pad + '</div><div class="ln">⌨️ ' + s.kb + '</div>';
 }
 addEventListener('keydown', e => { if (e.code === 'Escape' && TUT && menuEl.style.display === 'none'){ document.getElementById('tut').style.display = 'none'; TUT = null; gameMode = null; resetFighters(); showMenu('mode'); } });
 function survLevel(){ const w = SURV ? SURV.wave : 1; return w <= 2 ? LEVELS.Easy : w <= 5 ? LEVELS.Normal : LEVELS.Hard; }
@@ -1185,7 +1236,7 @@ function showMenu(page){
     box.innerHTML = '<table><tr><th>Action</th><th>Controller</th><th>Keyboard + mouse</th><th>Player 2 keys</th></tr>' +
       rows.map(r => '<tr>' + r.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('') + '</table>';
     const tips = document.createElement('div'); tips.className = 'tips';
-    tips.innerHTML = '<b>Special moves:</b> X while running = dash punch · X in the air = dive kick · RT in the air = triple fireball spread · roll then RT = fire wave · deflect just before a shot hits = PERFECT.<br>' +
+    tips.innerHTML = '<b>Special moves:</b> X while running = dash punch · X in the air = dive kick · RT in the air = triple fireball spread · roll then RT = fire wave · deflect just before a shot hits = PERFECT · <b>punch/kick then press the special within 1.5 s = COMBO ULTIMATE</b>.<br>' +
       '<b>Online:</b> everyone uses the controller or the main keyboard keys. <b>2 Players:</b> Player 2 uses a second controller or the Player 2 keys.';
     menuBtns.appendChild(box); menuBtns.appendChild(tips);
   }
@@ -1366,7 +1417,8 @@ function moveFighter(f, o, inp, dt, isP1){
     const sa = aimDir(f, isP1, new THREE.Vector3());
     f.root.rotation.y = Math.atan2(sa.x, sa.z); f.aimYaw = f.root.rotation.y; f.aimT = 0.8;
     play(f, 'Cast', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(1.3); f.busy = 0.45;
-    doSpecial(f, o, sa);
+    if (performance.now() - (f.lastMelee || 0) < 1500){ f.lastMelee = 0; dmgText(f.root.position, 'COMBO ULTIMATE!', '#ffd23f'); doUltimate(f, o, sa); }   // punch/kick then special = ultimate
+    else doSpecial(f, o, sa);
   }
   // ---- LT: raise an ice wall / fire wall between you and the enemy ----
   f.wcd = Math.max(0, f.wcd - dt);
@@ -1497,7 +1549,7 @@ function moveFighter(f, o, inp, dt, isP1){
     f.attack.t += dt;
     if (f.attack.t >= f.attack.at){
       f.hitDone = true;
-      if (dist < f.attack.range && o.iframes === 0 && o.hp > 0 && Math.abs(o.root.position.y - f.root.position.y) < 1.8) hit(o, f.attack, toOpp);
+      if (dist < f.attack.range && o.iframes === 0 && o.hp > 0 && Math.abs(o.root.position.y - f.root.position.y) < 1.8){ hit(o, f.attack, toOpp); f.lastMelee = performance.now(); }
     }
   }
 
@@ -1713,6 +1765,14 @@ function shoot(owner, target, pos, dir, opt = {}){
   const streak2 = add(KI_STREAK, 0xffffff, 0.22); streak2.rotation.x = -Math.PI/2; streak2.position.z = -1.0; streak2.scale.set(0.45, 0.6, 0.45);
   body.add(shell, shell2, streak, streak2); body.userData.shell = shell; body.userData.shell2 = shell2; body.userData.r1 = r1; body.userData.r2 = r2;
   if (opt.rock){ shell.visible = shell2.visible = streak.visible = streak2.visible = false; const rk = new THREE.Mesh(ROCK_GEO, new THREE.MeshToonMaterial({ color:0x7a5a3c, gradientMap:GRAD })); rk.add(new THREE.Mesh(ROCK_GEO, inkMat(0.004))); body.add(rk); }
+  if (opt.diamond || owner.element === 'ice'){   // ICE throws sparkling diamonds
+    shell.visible = shell2.visible = r1.visible = r2.visible = false;
+    const gem = new THREE.Mesh(GEM_GEO, new THREE.MeshBasicMaterial({ color:0xe6fbff }));
+    gem.add(new THREE.Mesh(GEM_GEO, inkMat(0.004)));
+    const inner = new THREE.Mesh(GEM_GEO, new THREE.MeshBasicMaterial({ color:0x6fd8ff, transparent:true, opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false }));
+    inner.scale.setScalar(0.6); gem.add(inner); gem.scale.set(1, 1.5, 1);
+    body.add(gem); body.userData.gem = gem;
+  }
   const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:e.c[2], transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.35 }));
   glow.scale.setScalar(1.7*sc); body.scale.setScalar(sc);
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:0xffffff, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.0 }));
@@ -1913,6 +1973,7 @@ function updateProjectiles(dt){
     p.g.position.addScaledVector(p.vel, dt);
     const pulse = 1 + Math.sin(p.age*45)*0.09;
     p.body.userData.shell.scale.setScalar(pulse);
+    if (p.body.userData.gem){ p.body.userData.gem.rotation.y += dt*14; p.body.userData.gem.rotation.x += dt*7; if (Math.random() < 0.5) puff(p.g.position.clone().add(new THREE.Vector3((Math.random()-0.5)*0.8, (Math.random()-0.5)*0.8, (Math.random()-0.5)*0.8)), Math.random() < 0.5 ? 0xffffff : 0xaef0ff, 0.12, 0, 0, 0, 0.2); }
     if (p.body.userData.shell.material.uniforms) p.body.userData.shell.material.uniforms.uTime.value += dt;
     if (p.body.userData.r1){ p.body.userData.r1.rotation.z += dt*9; p.body.userData.r2.rotation.x += dt*11; } p.body.userData.shell2.scale.setScalar(2.1 - pulse);
     if (Math.random() < 0.35){   // crackling energy sparks around the ball
