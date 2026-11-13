@@ -788,7 +788,14 @@ function pressed(f, inp, k){ const p = inp[k] && !f.prev[k]; return p; }
 const UP = new THREE.Vector3(0,1,0);
 function aimDir(f, isP1, out){
   if (isP1){ camera.getWorldDirection(out); out.y = 0; out.normalize(); } else out.copy(toOpp);
-  return out;
+  // vertical aim: automatically angle shots up/down toward the opponent's height (hovering above or below),
+  // and for the player, tilting the camera up/down (mouse or right stick) aims higher/lower too
+  const o = f === p1f ? p2f : p1f;
+  const hd = Math.max(1, Math.hypot(o.root.position.x - f.root.position.x, o.root.position.z - f.root.position.z));
+  let slope = (o.root.position.y - f.root.position.y) / hd;
+  if (isP1) slope += (0.32 - pitch) * 1.6;
+  out.y = Math.max(-1.6, Math.min(1.6, slope));
+  return out.normalize();
 }
 function handPos(f, aim, side){
   const r = new THREE.Vector3(aim.z, 0, -aim.x);
@@ -1420,7 +1427,7 @@ function updateCamera(dt){
     if (pad.buttons[11]?.pressed) { yawOff = 0; pitch = 0.32; } // click right stick to reset
   }
   if (!dragging && !locked() && !(pad && Math.abs(pad.axes[2]||0) > 0.15)) yawOff *= Math.pow(0.15, dt); // drift back behind the player
-  pitch = Math.min(1.0, Math.max(0.05, pitch));
+  pitch = Math.min(1.0, Math.max(-0.3, pitch));   // can tilt the camera upward to aim up
   camDist = Math.min(12, Math.max(3, camDist));
   const mp = (ME || p1f).root.position, tp2 = (THEM || p2f).root.position;
   const base = Math.atan2(mp.x - tp2.x, mp.z - tp2.z);
