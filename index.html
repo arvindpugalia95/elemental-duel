@@ -369,7 +369,7 @@ function masterClips(){
     make('Running', 'Run'); make('Running_Backward', 'Run_Back'); make('Left_Strafe', 'Run_Left'); make('Right_Strafe', 'Run_Right');
     make('Punching_Bag', 'Punch_Left', 0, 0.8, 0.5); make('Punching_Bag', 'Punch_Right', 0.8, 1.6, 0.5);
     make('Roundhouse_Kick', 'Kick_Left', 0.2, 1.6, 0.8); make('Roundhouse_Kick', 'Kick_Right', 0.2, 1.6, 0.8);
-    make('Standing_2H_Magic_Attack_01', 'Cast', 0.3, 1.7, 0.7); make('Standing_2H_Magic_Attack_01', 'Interact', 0.3, 1.7, 0.7);
+    if (src.Standing_2H_Magic_Attack_02) make('Standing_2H_Magic_Attack_02', 'Cast', 0.9, 1.7, 0.5); else make('Standing_2H_Magic_Attack_01', 'Cast', 0.3, 1.7, 0.7); make('Standing_2H_Magic_Attack_01', 'Interact', 0.3, 1.7, 0.7);
     make('Center_Block', 'Sword_Slash', 0, 0.9, 0.5);
     make('Sprinting_Forward_Roll', 'Roll', null, null, 0.55);
     make('Jump', 'Jump');
@@ -1087,17 +1087,9 @@ function shoot(owner, target, pos, dir, opt = {}){
   if (auth && gameMode === 'online') send({ t:'shoot', sid, pos:[pos.x, pos.y, pos.z], dir:[dir.x, dir.y, dir.z],
     opt:{ scale:opt.scale, dmg:opt.dmg, kb:opt.kb, launch:opt.launch, heavy:opt.heavy, aoe:opt.aoe, speed:opt.speed } });
   const e = ELEM[owner.element], isIce = owner.element === 'ice', g = new THREE.Group();
-  // energy-ball look: white-hot core, coloured energy shell, big glow, halo and a glowing streak
-  const add = (geo, color, op) => new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:op, blending:THREE.AdditiveBlending, depthWrite:false }));
-  const body = new THREE.Mesh(KI_CORE, new THREE.MeshBasicMaterial({ color:0xffffff }));
-  const shell = add(KI_SHELL, e.c[2], 0.75), shell2 = add(KI_SHELL2, e.c[3], 0.35);
-  const streak = add(KI_STREAK, e.c[1], 0.55); streak.rotation.x = -Math.PI/2; streak.position.z = -1.6;
-  const streak2 = add(KI_STREAK, 0xffffff, 0.5); streak2.rotation.x = -Math.PI/2; streak2.position.z = -1.0; streak2.scale.set(0.45, 0.6, 0.45);
-  body.add(shell, shell2, streak, streak2); body.userData.shell = shell; body.userData.shell2 = shell2;
+  const body = new THREE.Mesh(isIce ? ICE_GEO : FIRE_GEO, fireMat(e));
   const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:e.c[2], transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.85 }));
-  glow.scale.setScalar(4.2*sc); body.scale.setScalar(sc);
-  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:0xffffff, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.9 }));
-  halo.scale.setScalar(1.6*sc); glow.add(halo);
+  glow.scale.setScalar(3.2*sc); body.scale.setScalar(sc);
   g.add(glow, body);
   g.position.copy(pos); g.lookAt(pos.clone().add(dir)); scene.add(g);
   shots.push({ g, body, glow, owner, target, vel:dir.clone().multiplyScalar(opt.speed || 30), life:1.8, e, trailT:0, age:0, sc,
@@ -1243,8 +1235,6 @@ function clash(a, b){
   hitstop = 0.07; shake = Math.max(shake, 0.2);
   dmgText(pos.clone().setY(pos.y - 2.4), 'CLASH!', '#ffffff');
 }
-const KI_CORE = new THREE.SphereGeometry(0.3, 24, 16), KI_SHELL = new THREE.SphereGeometry(0.46, 24, 16), KI_SHELL2 = new THREE.SphereGeometry(0.62, 24, 16);
-const KI_STREAK = new THREE.ConeGeometry(0.42, 3.2, 20, 1, true);
 function killShot(p){ scene.remove(p.g); p.body.material.dispose(); p.glow.material.dispose(); }
 function updateProjectiles(dt){
   // shots from different fighters that meet cancel each other out
@@ -1264,15 +1254,11 @@ function updateProjectiles(dt){
   for (let i = shots.length - 1; i >= 0; i--){
     const p = shots[i]; p.life -= dt; p.age += dt;
     p.g.position.addScaledVector(p.vel, dt);
-    const pulse = 1 + Math.sin(p.age*45)*0.09;
-    p.body.userData.shell.scale.setScalar(pulse); p.body.userData.shell2.scale.setScalar(2.1 - pulse);
-    if (Math.random() < 0.35){   // crackling energy sparks around the ball
-      const r = 0.55*p.sc, a1 = Math.random()*6.28, a2 = Math.random()*6.28;
-      puff(p.g.position.clone().add(new THREE.Vector3(Math.cos(a1)*Math.sin(a2)*r, Math.cos(a2)*r, Math.sin(a1)*Math.sin(a2)*r)), 0xffffff, 0.16*p.sc, (Math.random()-0.5)*4, (Math.random()-0.5)*4, (Math.random()-0.5)*4, 0.09);
-    }
+    p.body.material.uniforms.uTime.value += dt;
+    p.body.rotation.z += dt * 6;
     p.glow.material.opacity = 0.7 + Math.sin(p.age*35)*0.15;
     p.trailT += dt;
-    const trailGap = 0.03 / Math.min(1, p.sc);   // small stream shots leave a lighter trail (less lag)
+    const trailGap = 0.012 / Math.min(1, p.sc);   // small stream shots leave a lighter trail (less lag)
     while (p.trailT > trailGap){ p.trailT -= trailGap;
       const back = p.vel.clone().normalize().multiplyScalar(-0.5);
       const j = 0.4, at = p.g.position.clone().add(back).add(new THREE.Vector3((Math.random()-0.5)*j, (Math.random()-0.5)*j, (Math.random()-0.5)*j));
