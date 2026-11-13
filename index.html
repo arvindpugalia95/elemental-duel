@@ -422,6 +422,33 @@ function makeFighter(element, tint, startPos, hpEl, charKey = 'ch24'){
   });
   return f;
 }
+// Superman flying pose built from the bones (no extra animation needed):
+// right arm stretched ahead, left arm along the body, legs straight back. Strength follows the forward tilt.
+const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _qd = new THREE.Quaternion(), _v1 = new THREE.Vector3(), _up = new THREE.Vector3();
+function aimBone(b, dir, w){
+  if (!b) return;
+  const wq = b.getWorldQuaternion(_q1);
+  _v1.set(0, 1, 0).applyQuaternion(wq);
+  _qd.setFromUnitVectors(_v1, dir);
+  const target = _qd.multiply(wq);
+  const pw = b.parent.getWorldQuaternion(_q2).invert();
+  b.quaternion.slerp(pw.multiply(target), w);
+  b.updateMatrixWorld(true);
+}
+function supermanPose(f){
+  if (!f.pivot) return;
+  const w = Math.min(1, Math.abs(f.pivot.rotation.x) / 1.1);
+  if (w < 0.05) return;
+  if (!f.bones){ f.bones = {}; f.pivot.traverse(o => { if (o.isBone) f.bones[o.name.replace(/^mixamorig\d*:?/, '')] = o; }); }
+  const B = f.bones;
+  f.pivot.updateMatrixWorld(true);
+  _up.set(0, 1, 0).applyQuaternion(f.pivot.getWorldQuaternion(new THREE.Quaternion())).normalize();
+  const head = _up.clone(), feet = _up.clone().negate();
+  aimBone(B.RightArm, head, w); aimBone(B.RightForeArm, head, w); aimBone(B.RightHand, head, w);
+  aimBone(B.LeftArm, feet, w*0.8); aimBone(B.LeftForeArm, feet, w*0.8);
+  aimBone(B.LeftUpLeg, feet, w); aimBone(B.LeftLeg, feet, w);
+  aimBone(B.RightUpLeg, feet, w); aimBone(B.RightLeg, feet, w);
+}
 function play(f, name, fade=0.15, restart=false){
   const next = f.actions[name]; if (!next || (f.cur === name && !restart)) return;
   f.animN = (f.animN || 0) + 1;
@@ -623,7 +650,7 @@ function updatePuppet(f, dt){
   f.aura.scale.setScalar(1 + (f.charging ? f.charge*0.8 : 0));
   if (f.flash > 0){ f.flash -= dt; if (f.flash <= 0) f.mats.forEach(mm => mm.emissive && mm.emissive.setHex(0x000000)); }
   sfx.charge(f, f.charging && f.hp > 0 ? f.charge : -1);
-  f.mixer.update(dt);
+  f.mixer.update(dt); supermanPose(f);
 }
 // ---------- Start menu: mode + difficulty ----------
 let gameMode = null, AIL = null, koTimer = 0;
@@ -939,7 +966,7 @@ function moveFighter(f, o, inp, dt, isP1){
       f.actions[f.cur].setEffectiveTimeScale(Math.max(0.6, sp / 8));
     }
   }
-  f.mixer.update(dt);
+  f.mixer.update(dt); supermanPose(f);
   f.aura.material.opacity = 0.4 + Math.sin(performance.now()/200)*0.15;
   sfx.charge(f, f.charging && f.hp > 0 ? f.charge : -1);
   f.prev = inp;
