@@ -227,12 +227,12 @@ scene.add(new THREE.HemisphereLight(0xdfeeff, 0x6a6058, 0.32));
 const sun = new THREE.DirectionalLight(0xfff1dc, 1.05);
 sun.position.set(30, 55, 20); sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left:-56, right:56, top:56, bottom:-56, far:180 });
+Object.assign(sun.shadow.camera, { left:-80, right:80, top:80, bottom:-80, far:220 });
 sun.shadow.bias = -0.0003; sun.shadow.normalBias = 0.02;
 scene.add(sun);
 
 // ---------- Courtyard ----------
-const AW = 84, AD = 84, WH = 10;   // arena size (was 48)
+const AW = 150, AD = 150, WH = 2.2;   // open world size; low stone fence at the edge
 const slabTex = canvasTex(512, 512, (g, w) => {
   g.fillStyle = '#4c5563'; g.fillRect(0,0,w,w);
   for (let y=0;y<4;y++) for (let x=0;x<4;x++){
@@ -241,8 +241,11 @@ const slabTex = canvasTex(512, 512, (g, w) => {
     for (let k=0;k<300;k++){ g.fillStyle = `rgba(60,70,80,${Math.random()*0.06})`; g.fillRect(x*128+Math.random()*124, y*128+Math.random()*124, 2, 2); }
   }
 }, AW/8, AD/8);
-const floor = add(new THREE.Mesh(new THREE.PlaneGeometry(AW, AD), mat(0xffffff, { map:slabTex, roughness:0.9 })), scene, false);
+const grassTex = canvasTex(256, 256, (g, w) => { g.fillStyle = '#5fae47'; g.fillRect(0,0,w,w); for (let i=0;i<2500;i++){ g.fillStyle = Math.random() < .5 ? 'rgba(40,110,40,.25)' : 'rgba(150,210,110,.22)'; g.fillRect(Math.random()*w, Math.random()*w, 2, 4); } }, (AW + 260)/10, (AD + 260)/10);
+const floor = add(new THREE.Mesh(new THREE.PlaneGeometry(AW + 260, AD + 260), mat(0xffffff, { map:grassTex, roughness:1 })), scene, false);
 floor.rotation.x = -Math.PI/2;
+const plaza = add(new THREE.Mesh(new THREE.CircleGeometry(24, 64), mat(0xffffff, { map:slabTex, roughness:0.9 })), scene, false);   // stone plaza in the middle
+plaza.rotation.x = -Math.PI/2; plaza.position.y = 0.02;
 
 const plasterTex = canvasTex(256, 256, (g, w) => {
   g.fillStyle = '#b89e94'; g.fillRect(0,0,w,w);
@@ -281,8 +284,7 @@ function banner(x, z, rotY, i){
   b.position.set(x, 6.2, z); b.rotation.y = rotY;
 }
 let bi = 0;
-for (let x=-18; x<=18; x+=9) { banner(x, -AD/2+0.62, 0, bi++); banner(x, AD/2-0.62, Math.PI, bi++); }
-for (let z=-14; z<=14; z+=14) { banner(-AW/2+0.62, z, Math.PI/2, bi++); banner(AW/2-0.62, z, -Math.PI/2, bi++); }
+
 
 // Green stone blocks / benches along the back wall (cover)
 const greenStone = mat(0x3f6150, { roughness:0.8 });
@@ -291,7 +293,7 @@ const greenStone = mat(0x3f6150, { roughness:0.8 });
 });
 
 // Covered gallery roof over one corner (like the reference)
-(function gallery(){
+(function gallery(){ return;
   const g = new THREE.Group(), wood = mat(0x6a4a34);
   const roof = add(new THREE.Mesh(new THREE.BoxGeometry(18, 0.6, 8), mat(0x4a5a6a, { roughness:0.6 })), g); roof.position.set(0, 9.6, 0);
   [-8,0,8].forEach(x => { const p = add(new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.4,9.4,12), wood), g); p.position.set(x, 4.7, 3.5); });
@@ -312,10 +314,7 @@ function stands(x, z, rotY, len){
   }
   g.position.set(x, 0, z); g.rotation.y = rotY; scene.add(g);
 }
-stands(0, -AD/2 - 2.5, 0, AW+8);
-stands(AW/2 + 2.5, 0, -Math.PI/2, AD+8);
-stands(-AW/2 - 2.5, 0, Math.PI/2, AD+8);
-stands(0, AD/2 + 2.5, Math.PI, AW+8);
+
 
 // ---------- Arena obstacles: real walls, pillars and crates (block movement and energy balls) ----------
 const OBST = [];
@@ -323,8 +322,10 @@ function obstacle(x, z, w, h, d, color, round){
   const geo = round ? new THREE.CylinderGeometry(w/2, w/2*1.08, h, 18) : new THREE.BoxGeometry(w, h, d);
   const m = add(new THREE.Mesh(geo, mat(color, { roughness:0.9 })));
   m.position.set(x, h/2, z);
-  if (!round){ const cap = add(new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.35, d + 0.3), mat(0x7e6c62))); cap.position.set(x, h + 0.17, z); }
-  OBST.push({ x, z, hx:w/2, hz:(round ? w : d)/2, h });
+  let cap = null;
+  if (!round){ cap = add(new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.35, d + 0.3), mat(0x7e6c62))); cap.position.set(x, h + 0.17, z); }
+  OBST.push({ x, z, hx:w/2, hz:(round ? w : d)/2, h, m, cap });
+  return OBST[OBST.length - 1];
 }
 // broken stone walls in a ring around the centre (the middle stays open for fighting)
 [[0, -16, 9, 2.6, 1.1], [0, 16, 9, 2.6, 1.1], [-16, 0, 1.1, 2.6, 9], [16, 0, 1.1, 2.6, 9]].forEach(([x, z, w, h, d]) => obstacle(x, z, w, h, d, 0xb89e94));
@@ -332,18 +333,110 @@ function obstacle(x, z, w, h, d, color, round){
 // tall pillars
 [[-11, -11], [11, -11], [-11, 11], [11, 11], [0, -30], [0, 30], [-30, 0], [30, 0]].forEach(([x, z]) => obstacle(x, z, 2.2, 6, 2.2, 0x8a7468, true));
 // low crates to jump over or hide behind
-[[-20, -8], [20, 8], [-8, 22], [8, -22], [-34, 14], [34, -14], [14, 34], [-14, -34]].forEach(([x, z]) => obstacle(x, z, 2, 1.4, 2, 0x7a5236));
+[[-20, -8], [20, 8], [-8, 22], [8, -22], [-34, 14], [34, -14], [14, 34], [-14, -34]].forEach(([x, z]) => { obstacle(x, z, 2, 1.4, 2, 0x7a5236).crate = 2; });   // crates break after 2 hits and drop an item
 function pushOutOfObstacles(f){
   const p = f.root.position, r = 0.35;
   for (const o of OBST){
-    if (p.y >= o.h) continue;   // standing on top / hovering above
+    if (o.dead || p.y >= o.h) continue;   // standing on top / hovering above
     const dx = p.x - o.x, dz = p.z - o.z, ox = o.hx + r - Math.abs(dx), oz = o.hz + r - Math.abs(dz);
     if (ox > 0 && oz > 0){ if (ox < oz) p.x += Math.sign(dx || 1)*ox; else p.z += Math.sign(dz || 1)*oz; }
   }
 }
 function hitsObstacle(pos){
-  for (const o of OBST) if (pos.y < o.h && Math.abs(pos.x - o.x) < o.hx && Math.abs(pos.z - o.z) < o.hz) return true;
+  for (const o of OBST) if (!o.dead && pos.y < o.h && Math.abs(pos.x - o.x) < o.hx && Math.abs(pos.z - o.z) < o.hz) return true;
   return false;
+}
+// ---------- Open world: grassland, forest, boulders, jump pads, healing springs, explosive crystals ----------
+const rnd = (a, b) => a + Math.random()*(b - a);
+function clearSpot(x, z, r){
+  if (Math.hypot(x, z) < 15) return false;
+  for (const o of OBST) if (Math.abs(x - o.x) < o.hx + r && Math.abs(z - o.z) < o.hz + r) return false;
+  return true;
+}
+for (let i = 0, n = 0; i < 500 && n < 45; i++){   // trees with solid trunks
+  const x = rnd(-AW/2 + 6, AW/2 - 6), z = rnd(-AD/2 + 6, AD/2 - 6);
+  if (!clearSpot(x, z, 3)) continue; n++;
+  obstacle(x, z, 0.9, 3.2, 0.9, 0x6b4a2c, true);
+  const s = rnd(0.9, 1.4);
+  [[2.6, 3, 3.6], [2, 2.6, 5], [1.3, 2.2, 6.2]].forEach(([r, h, y], k) => { const c = add(new THREE.Mesh(new THREE.ConeGeometry(r*s, h*s, 9), mat([0x2f8a3a, 0x3fa246, 0x55b84f][k]))); c.position.set(x, y*s*0.9, z); });
+}
+for (let i = 0, n = 0; i < 300 && n < 16; i++){   // big boulders
+  const x = rnd(-AW/2 + 6, AW/2 - 6), z = rnd(-AD/2 + 6, AD/2 - 6);
+  if (!clearSpot(x, z, 3)) continue; n++;
+  const r = rnd(1.2, 2.2), b = add(new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), mat(0x8a8a86)));
+  b.position.set(x, r*0.6, z); b.rotation.set(Math.random(), Math.random(), 0);
+  OBST.push({ x, z, hx:r*0.8, hz:r*0.8, h:r*1.3, m:b });
+}
+for (let i = 0; i < 26; i++){   // rolling hills outside the fence
+  const a = i/26*Math.PI*2, r = rnd(AW/2 + 18, AW/2 + 60);
+  const hill = add(new THREE.Mesh(new THREE.SphereGeometry(rnd(14, 26), 16, 10, 0, Math.PI*2, 0, Math.PI/2), mat(0x5fae47)), scene, false);
+  hill.position.set(Math.cos(a)*r, -2, Math.sin(a)*r); hill.scale.y = rnd(0.35, 0.7); hill.userData.noToon = true;
+}
+for (let i = 0; i < 70; i++){   // forest outside the fence
+  const a = Math.random()*Math.PI*2, r = rnd(AW/2 + 6, AW/2 + 40), s = rnd(1.2, 2.2), x = Math.cos(a)*r, z = Math.sin(a)*r;
+  const tr = add(new THREE.Mesh(new THREE.CylinderGeometry(0.35*s, 0.5*s, 2.5*s, 8), mat(0x6b4a2c))); tr.position.set(x, 1.25*s, z);
+  const c = add(new THREE.Mesh(new THREE.ConeGeometry(2.4*s, 4.5*s, 9), mat(0x2f8a3a))); c.position.set(x, 4.2*s, z); tr.userData.noToon = c.userData.noToon = true;   // scenery: no outlines (keeps it fast)
+}
+const PADS = [], SPRINGS = [], CRYSTALS = [], worldRespawn = [];
+function flatDisc(x, z, r, color, op){
+  const d = new THREE.Mesh(new THREE.CircleGeometry(r, 40), new THREE.MeshBasicMaterial({ color, transparent:true, opacity:op, depthWrite:false }));
+  d.rotation.x = -Math.PI/2; d.position.set(x, 0.05, z); scene.add(d); return d;
+}
+[[-22, 22], [22, -22], [40, 40], [-40, -40], [45, -10], [-45, 10], [0, 55], [0, -55]].forEach(([x, z]) => {   // jump pads
+  flatDisc(x, z, 1.4, 0xffd23f, 0.85);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.5, 1.8, 40), new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0.8, side:THREE.DoubleSide, depthWrite:false }));
+  ring.rotation.x = -Math.PI/2; ring.position.set(x, 0.07, z); scene.add(ring); PADS.push({ x, z, ring });
+});
+[[-50, 45], [50, -45]].forEach(([x, z]) => { flatDisc(x, z, 3.5, 0x5fe3c0, 0.55); SPRINGS.push({ x, z }); });   // healing springs
+[[-30, -12], [30, 12], [12, 44], [-12, -44], [55, 25], [-55, -25]].forEach(([x, z]) => {   // explosive crystals
+  const g = new THREE.Mesh(new THREE.OctahedronGeometry(0.9, 0), new THREE.MeshBasicMaterial({ color:0xff5be0 }));
+  g.scale.y = 1.6; g.position.set(x, 1.5, z); scene.add(g);
+  const o = { x, z, hx:0.7, hz:0.7, h:3, m:g, crystal:true }; OBST.push(o); CRYSTALS.push(o);
+});
+function breakObst(o){
+  o.dead = true; o.m.visible = false; if (o.cap) o.cap.visible = false;
+  const p = new THREE.Vector3(o.x, 1, o.z);
+  if (o.crystal){   // BOOM: hurts everyone close by
+    explode(p, ELEM.storm, true, 2); sfx.boom(2, true); shake = Math.max(shake, 0.3);
+    for (const f of FIGHTERS){
+      if (!f.active || f.hp <= 0 || f.remote) continue;
+      if (Math.hypot(f.root.position.x - o.x, f.root.position.z - o.z) < 6) hit(f, { dmg:15, kb:12, launch:8, heavy:true }, new THREE.Vector3(f.root.position.x - o.x, 0, f.root.position.z - o.z).normalize());
+    }
+  } else {   // crate: splinters and drops a magic item
+    for (let k = 0; k < 12; k++) puff(p, k % 2 ? 0x7a5236 : 0xa07850, 0.4, (Math.random() - 0.5)*7, Math.random()*5, (Math.random() - 0.5)*7, 0.5);
+    sfx.shatter('fire'); if (!isNet()) spawnItem(o.x, o.z);
+  }
+  worldRespawn.push({ o, t:25 });
+}
+function shotHitsObstacle(pos){
+  for (const o of OBST){
+    if (o.dead || pos.y >= o.h || Math.abs(pos.x - o.x) >= o.hx || Math.abs(pos.z - o.z) >= o.hz) continue;
+    if (o.crystal) breakObst(o); else if (o.crate){ o.crate--; if (o.crate <= 0) breakObst(o); }
+    return true;
+  }
+  return false;
+}
+function updateWorld(dt){
+  const tt = performance.now()/1000;
+  PADS.forEach(p => { const k = tt*1.5 % 1; p.ring.scale.setScalar(1 + k*0.6); p.ring.material.opacity = 0.8*(1 - k); });
+  CRYSTALS.forEach(c => { if (!c.dead){ c.m.rotation.y += dt*1.5; c.m.position.y = 1.5 + Math.sin(tt*2 + c.x)*0.2; } });
+  for (let i = worldRespawn.length - 1; i >= 0; i--){
+    const r = worldRespawn[i]; r.t -= dt;
+    if (r.t <= 0){ r.o.dead = false; r.o.m.visible = true; if (r.o.cap) r.o.cap.visible = true; if (r.o.crate !== undefined) r.o.crate = 2; worldRespawn.splice(i, 1); }
+  }
+  if (!gameMode) return;
+  for (const f of FIGHTERS){
+    if (!f.active || f.hp <= 0 || f.remote) continue;
+    const p = f.root.position;
+    for (const pd of PADS) if (f.onGround && Math.hypot(p.x - pd.x, p.z - pd.z) < 1.5){   // JUMP PAD: launch high into the air
+      f.vy = 19; f.onGround = false; sfx.jump();
+      for (let k = 0; k < 10; k++) puff(new THREE.Vector3(pd.x, 0.3, pd.z), 0xffd23f, 0.35, (Math.random() - 0.5)*4, 4 + Math.random()*4, (Math.random() - 0.5)*4, 0.4);
+    }
+    for (const s of SPRINGS) if (f.hp < 100 && Math.hypot(p.x - s.x, p.z - s.z) < 3.5){   // HEALING SPRING
+      f.hp = Math.min(100, f.hp + dt*8); f.hpEl.style.width = f.hp + '%';
+      if (Math.random() < 0.3) puff(new THREE.Vector3(p.x, 0.5, p.z), 0x8affd8, 0.25, 0, 3, 0, 0.5);
+    }
+  }
 }
 
 // ---------- Anime cel-shading: toon materials + ink outlines on everything ----------
@@ -384,7 +477,7 @@ toonify(scene);
 const A = window.ED_ASSETS;
 const b64buf = s => Uint8Array.from(atob(s), c => c.charCodeAt(0)).buffer;
 const loader = new THREE.GLTFLoader();
-const TARGET_H = 1.4;   // fighter height
+const TARGET_H = 1.12;   // fighter height
 function parseGLB(b64){
   return new Promise((res, rej) => {
     const cib = window.createImageBitmap; window.createImageBitmap = undefined;   // use <img> + data: URIs for textures
@@ -437,11 +530,11 @@ function makeFighter(element, tint, startPos, hpEl, charKey = 'ch24'){
               element, cd:0, busy:0, hitDone:true, mats:[], flash:0, deflectT:0, dcd:0, wcd:0, comboT:0, chainT:0, chain:0, sinceRoll:9, holdT:0, charge:0, charging:false, down:false, hitSide:false, hp:100, mp:100, hpEl, prev:{}, combo:0, stun:0, iframes:0, rollDir:new THREE.Vector3() };
   f.root.position.copy(startPos); scene.add(f.root);
   f.aura = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.15, 48), new THREE.MeshBasicMaterial({ color:tint, transparent:true, opacity:0.55, side:THREE.DoubleSide }));
-  f.aura.rotation.x = -Math.PI/2; f.aura.position.y = 0.03; f.aura.scale.setScalar(0.45); f.root.add(f.aura);
+  f.aura.rotation.x = -Math.PI/2; f.aura.position.y = 0.03; f.aura.scale.setScalar(0.36); f.root.add(f.aura);
   f.shield = new THREE.Mesh(new THREE.CircleGeometry(1.5, 40), new THREE.MeshBasicMaterial({ color:tint, transparent:true, opacity:0, side:THREE.DoubleSide, depthWrite:false }));
   const rim = new THREE.Mesh(new THREE.RingGeometry(1.38, 1.55, 40), new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0, side:THREE.DoubleSide, depthWrite:false }));
   f.shield.add(rim); f.shield.rim = rim;
-  f.shield.position.set(0, 0.8, 0.5); f.shield.scale.setScalar(0.45); f.shield.visible = false; f.root.add(f.shield);
+  f.shield.position.set(0, 0.64, 0.4); f.shield.scale.setScalar(0.36); f.shield.visible = false; f.root.add(f.shield);
   Promise.all([parseGLB(A.characters[charKey]), masterClips()]).then(([gltf, clips]) => {
     const m = gltf.scene;
     m.traverse(o => {
@@ -455,7 +548,7 @@ function makeFighter(element, tint, startPos, hpEl, charKey = 'ch24'){
     m.traverse(o => { if (o.isBone){ o.getWorldPosition(v); headY = Math.max(headY, v.y); } });
     const h = headY > 0.01 ? headY * 1.12 : 2.0;
     m.scale.multiplyScalar(TARGET_H / h);
-    f.pivot = new THREE.Group(); f.pivot.position.y = 0.7; m.position.y -= 0.7; f.pivot.add(m); f.root.add(f.pivot);
+    f.pivot = new THREE.Group(); f.pivot.position.y = 0.56; m.position.y -= 0.56; f.pivot.add(m); f.root.add(f.pivot);
     f.mixer = new THREE.AnimationMixer(m);
     clips.forEach(c => f.actions[c.name] = f.mixer.clipAction(c));
     ['Punch_Left','Punch_Right','Kick_Left','Kick_Right','Roll','HitRecieve','HitRecieve_2','Death','Cast','Interact','Sword_Slash','Jump','Getup'].forEach(n => {
@@ -645,9 +738,9 @@ const ITEM_TYPES = [
   { k:'magic',  c:0xb46cff, css:'#d8a8ff', txt:'UNLIMITED MAGIC (8s)', fn:f => { f.freeMagicT = 8; } }
 ];
 const ITEM_GEO = new THREE.IcosahedronGeometry(0.32, 0);
-function spawnItem(){
+function spawnItem(px, pz){
   for (let tries = 0; tries < 12; tries++){
-    const x = (Math.random() - 0.5)*(AW - 12), z = (Math.random() - 0.5)*(AD - 12);
+    const x = px ?? (Math.random() - 0.5)*(AW - 12), z = pz ?? (Math.random() - 0.5)*(AD - 12);
     if (hitsObstacle(new THREE.Vector3(x, 0.5, z))) continue;
     const type = ITEM_TYPES[Math.floor(Math.random()*ITEM_TYPES.length)], g = new THREE.Group();
     const gem = new THREE.Mesh(ITEM_GEO, new THREE.MeshBasicMaterial({ color:type.c })); gem.add(new THREE.Mesh(ITEM_GEO, inkMat(0.004)));
@@ -663,7 +756,7 @@ function spawnItem(){
 function updateItems(dt){
   if (!gameMode || isNet()){ if (ITEMS.length){ ITEMS.forEach(it => scene.remove(it.g)); ITEMS.length = 0; } return; }
   itemT -= dt;
-  if (itemT <= 0){ itemT = 5; if (ITEMS.length < 6) spawnItem(); }
+  if (itemT <= 0){ itemT = 5; if (ITEMS.length < 10) spawnItem(); }
   for (let i = ITEMS.length - 1; i >= 0; i--){
     const it = ITEMS[i]; it.t += dt;
     it.g.position.y = 0.9 + Math.sin(it.t*3)*0.15; it.gem.rotation.y += dt*2.5; it.gem.rotation.x += dt*1.3;
@@ -800,7 +893,7 @@ function updateSpecials(dt){
       if (s.tick <= 0 && f.hp > 0 && f.stun === 0){
         s.tick = 0.1;
         for (const t of specialFoes(f)){
-          const v = new THREE.Vector3(t.root.position.x, t.root.position.y + 0.75, t.root.position.z).sub(start);
+          const v = new THREE.Vector3(t.root.position.x, t.root.position.y + 0.6, t.root.position.z).sub(start);
           const along = v.dot(s.aim);
           if (along > 0 && along < s.L && v.addScaledVector(s.aim, -along).length() < 0.75) hit(t, { dmg:3, kb:1.2, noStop:true }, s.aim);
         }
@@ -810,7 +903,7 @@ function updateSpecials(dt){
       s.ring.position.set(s.tgt.root.position.x, 0.06, s.tgt.root.position.z);
       s.ring.scale.setScalar(1 + (0.4 - s.t)*2);
       if (s.t <= 0){
-        const p = s.tgt.root.position, top = new THREE.Vector3(p.x, 16, p.z), end = new THREE.Vector3(p.x, p.y + 0.8, p.z);
+        const p = s.tgt.root.position, top = new THREE.Vector3(p.x, 16, p.z), end = new THREE.Vector3(p.x, p.y + 0.64, p.z);
         for (let k = 0; k <= 14; k++){
           const q = top.clone().lerp(end, k/14).add(new THREE.Vector3((Math.random() - 0.5)*0.9, 0, (Math.random() - 0.5)*0.9));
           puff(q, k % 2 ? 0xffffff : 0xd8a8ff, 0.45, 0, 0, 0, 0.22);
@@ -1197,7 +1290,7 @@ function onNet(m){
       const prev = p.owner; p.owner = p.target; p.target = prev;
       p.g.position.set(...m.pos); p.vel.set(...m.vel); p.g.lookAt(p.g.position.clone().add(p.vel));
       p.dmg = m.dmg; p.sc = m.sc; p.body.scale.setScalar(p.sc); p.life = 1.8;
-      hitstop = 0.08; shake = Math.max(shake, 0.16); spark(p.g.position.clone().setY(p.g.position.y - 0.8), m.perfect);
+      hitstop = 0.08; shake = Math.max(shake, 0.16); spark(p.g.position.clone().setY(p.g.position.y - 0.64), m.perfect);
       sfx.deflect(m.perfect); dmgText(p.owner.root.position, m.perfect ? 'PERFECT!' : 'DEFLECT!', m.perfect ? '#ffd23f' : '#9fe8ff');
       break;
     }
@@ -1291,7 +1384,7 @@ function showMenu(page){
     box.innerHTML = '<table><tr><th>Action</th><th>Controller</th><th>Keyboard + mouse</th><th>Player 2 keys</th></tr>' +
       rows.map(r => '<tr>' + r.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('') + '</table>';
     const tips = document.createElement('div'); tips.className = 'tips';
-    tips.innerHTML = '<b>Special moves:</b> X while running = dash punch · X in the air = dive kick · RT in the air = triple fireball spread · roll then RT = fire wave · deflect just before a shot hits = PERFECT · <b>punch/kick then press the special within 1.5 s = COMBO ULTIMATE</b>.<br><b>Magic items</b> appear around the arena: walk into them! 🔵 energy · 🟢 health · 🔴 power ×1.5 · 🟡 speed · ⚪ shield · 🟣 unlimited magic.<br>' +
+    tips.innerHTML = '<b>Special moves:</b> X while running = dash punch · X in the air = dive kick · RT in the air = triple fireball spread · roll then RT = fire wave · deflect just before a shot hits = PERFECT · <b>punch/kick then press the special within 1.5 s = COMBO ULTIMATE</b>.<br><b>World:</b> 🟡 jump pads launch you high · 🩵 springs heal you · 💗 crystals EXPLODE when shot · 📦 crates break and drop items.<br><b>Magic items</b> appear around the arena: walk into them! 🔵 energy · 🟢 health · 🔴 power ×1.5 · 🟡 speed · ⚪ shield · 🟣 unlimited magic.<br>' +
       '<b>Online:</b> everyone uses the controller or the main keyboard keys. <b>2 Players:</b> Player 2 uses a second controller or the Player 2 keys.';
     menuBtns.appendChild(box); menuBtns.appendChild(tips);
   }
@@ -1432,7 +1525,7 @@ function aimDir(f, isP1, out){
 }
 function handPos(f, aim, side){
   const r = new THREE.Vector3(aim.z, 0, -aim.x);
-  return f.root.position.clone().addScaledVector(aim, 1.0).addScaledVector(r, side*0.35).setY(f.root.position.y + 0.88);
+  return f.root.position.clone().addScaledVector(aim, 1.0).addScaledVector(r, side*0.35).setY(f.root.position.y + 0.7);
 }
 function startMelee(f, anim, ts, busy, atk, lunge){
   sfx.swing(atk.dmg >= 10);
@@ -1677,8 +1770,8 @@ function hit(o, atk, dir){
   if (atk.freeze && o.hp > 0){   // ICE: frozen solid for 2 seconds -> free combo time
     o.stun = 2.0; o.frozen = 2.0; o.vel.set(0, 0, 0); o.down = false;
     if (!o.iceBlock){
-      o.iceBlock = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.6, 1.7, 7), new THREE.MeshToonMaterial({ color:0xbfeeff, gradientMap:GRAD, transparent:true, opacity:0.6 }));
-      o.iceBlock.position.y = 0.8; o.iceBlock.add(new THREE.Mesh(o.iceBlock.geometry, inkMat(0.004))); o.root.add(o.iceBlock);
+      o.iceBlock = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.5, 1.4, 7), new THREE.MeshToonMaterial({ color:0xbfeeff, gradientMap:GRAD, transparent:true, opacity:0.6 }));
+      o.iceBlock.position.y = 0.66; o.iceBlock.add(new THREE.Mesh(o.iceBlock.geometry, inkMat(0.004))); o.root.add(o.iceBlock);
     }
     dmgText(o.root.position, 'FROZEN!', '#bfeeff');
   }
@@ -1698,7 +1791,7 @@ function dmgText(pos, n, color){
   g.clearRect(0,0,128,64); g.font = (typeof n === 'string' ? 'bold 27px' : 'bold 48px') + ' Impact, sans-serif'; g.textAlign = 'center'; g.lineWidth = 8;
   g.strokeStyle = '#1a1010'; g.strokeText(n, 64, 50); g.fillStyle = color; g.fillText(n, 64, 50);
   d.t.needsUpdate = true; d.sp.visible = true; d.life = 0.7;
-  d.sp.position.set(pos.x + (Math.random()-0.5)*0.6, pos.y + 1.7, pos.z);
+  d.sp.position.set(pos.x + (Math.random()-0.5)*0.6, pos.y + 1.4, pos.z);
   d.sp.scale.set(2.2, 1.1, 1);
 }
 function updateDmg(dt){
@@ -1715,7 +1808,7 @@ function explodeDust(pos, el){
 // impact spark
 const sparks = [];
 function spark(pos, big){
-  const c = new THREE.Vector3(pos.x, pos.y + 0.8, pos.z), n = big ? 12 : 7;
+  const c = new THREE.Vector3(pos.x, pos.y + 0.64, pos.z), n = big ? 12 : 7;
   for (let i = 0; i < n; i++){ const a = i/n*Math.PI*2, sp = big ? 11 : 7; puff(c, i % 2 ? 0xffffff : 0xffe066, big ? 0.5 : 0.35, Math.cos(a)*sp, Math.sin(a)*sp*0.7 + 2, Math.sin(a)*sp, big ? 0.22 : 0.16); }
   puff(c, 0xffffff, big ? 1.6 : 0.9, 0, 0, 0, 0.07);
 }
@@ -2060,7 +2153,7 @@ function updateProjectiles(dt){
     if (blocked){ scene.remove(p.g); p.body.material.dispose(); p.glow.material.dispose(); shots.splice(i, 1); continue; }
     if (gameMode === 'ffa' || (gameMode === 'survival' && p.owner === p1f)){ const nt = nearestFoeTo(p.g.position, p.owner); if (nt) p.target = nt; }
     const t = p.target, tp = t.root.position;
-    const dx = p.g.position.x - tp.x, dy = p.g.position.y - (tp.y + 0.75), dz = p.g.position.z - tp.z;
+    const dx = p.g.position.x - tp.x, dy = p.g.position.y - (tp.y + 0.6), dz = p.g.position.z - tp.z;
     let done = false;
     const rr = 1.0 * Math.max(1, p.sc*0.8);
     const atk = { dmg:p.dmg, kb:p.kb, launch:p.launch, heavy:p.heavy, freeze:p.freeze, slow:p.e.slow };
@@ -2077,12 +2170,12 @@ function updateProjectiles(dt){
       if (isNet()) send({ t:'deflect', sid:p.sid, pos:[p.g.position.x, p.g.position.y, p.g.position.z], vel:[p.vel.x, p.vel.y, p.vel.z], dmg:p.dmg, sc:p.sc, perfect });
       if (!t.remote){ t.deflectT = t.holdingDeflect ? 0.13 : 0; t.dcd = 0.15; t.busy = 0.1; }
       hitstop = 0.08; shake = Math.max(shake, 0.16);
-      spark(p.g.position.clone().setY(p.g.position.y - 0.8), perfect);
+      spark(p.g.position.clone().setY(p.g.position.y - 0.64), perfect);
       sfx.deflect(perfect); dmgText(t.root.position, perfect ? 'PERFECT!' : 'DEFLECT!', perfect ? '#ffd23f' : '#9fe8ff');
     } else if (t.hp > 0 && t.iframes === 0 && dx*dx + dz*dz < rr*rr && Math.abs(dy) < 1.8*Math.max(1, p.sc*0.7)){
       hit(t, atk, p.vel.clone().setY(0).normalize());
       explode(p.g.position, p.e, true, p.sc); done = true; p.endBig = true;
-    } else if (p.life <= 0 || hitsObstacle(p.g.position) || Math.abs(p.g.position.x) > AW/2 - 0.8 || Math.abs(p.g.position.z) > AD/2 - 0.8 || p.g.position.y < 0.3){
+    } else if (p.life <= 0 || shotHitsObstacle(p.g.position) || Math.abs(p.g.position.x) > AW/2 - 0.8 || Math.abs(p.g.position.z) > AD/2 - 0.8 || p.g.position.y < 0.3){
       // big charged blasts still catch you in the explosion radius
       if (p.aoe && t.hp > 0 && t.iframes === 0 && Math.hypot(dx, dz) < p.aoe) hit(t, atk, new THREE.Vector3(-dx, 0, -dz).normalize());
       explode(p.g.position, p.e, !!p.aoe, p.sc); done = true; p.endBig = !!p.aoe;
@@ -2115,7 +2208,7 @@ function separate(){
 }
 
 // ---------- Third-person camera behind Player 1 ----------
-let yawOff = 0, pitch = 0.32, camDist = 3.3, dragging = false, lx = 0, ly = 0;
+let yawOff = 0, pitch = 0.32, camDist = 2.8, dragging = false, lx = 0, ly = 0;
 const el = renderer.domElement;
 // Mouse: click the game to lock the mouse, then just move it to look (Esc frees it).
 // Left click = fireball (tap x3 combo, hold to charge) · right click = deflect.
@@ -2164,7 +2257,7 @@ function updateCamera(dt){
   }
   if (!dragging && !locked() && !(pad && Math.abs(pad.axes[2]||0) > 0.15)) yawOff *= Math.pow(0.15, dt); // drift back behind the player
   pitch = Math.min(1.0, Math.max(-0.3, pitch));   // can tilt the camera upward to aim up
-  camDist = Math.min(12, Math.max(2.2, camDist));
+  camDist = Math.min(12, Math.max(1.8, camDist));
   const mp = (ME || p1f).root.position, tp2 = (THEM || p2f).root.position;
   const base = Math.atan2(mp.x - tp2.x, mp.z - tp2.z);
   // mouse locked = free look like a shooter (camera stays where you point it); otherwise lock-on camera
@@ -2173,7 +2266,7 @@ function updateCamera(dt){
   const yaw = camYaw !== null ? camYaw : base + yawOff;
   const target = new THREE.Vector3(
     mp.x + Math.sin(yaw)*Math.cos(pitch)*camDist,
-    mp.y + 1.2 + Math.sin(pitch)*camDist,
+    mp.y + 1.0 + Math.sin(pitch)*camDist,
     mp.z + Math.cos(yaw)*Math.cos(pitch)*camDist);
   // over-the-shoulder offset
   target.x += Math.cos(yaw)*0.9; target.z -= Math.sin(yaw)*0.9;
@@ -2186,7 +2279,7 @@ function updateCamera(dt){
   camPos.lerp(target, 1 - Math.pow(locked() ? 1e-9 : 0.001, dt));   // near-instant follow with the mouse = no lag
   camera.position.copy(camPos);
   if (shake > 0){ shake -= dt; camera.position.x += (Math.random()-0.5)*0.25; camera.position.y += (Math.random()-0.5)*0.25; }
-  lookAt.set(mp.x - Math.sin(yaw)*6, 0.95 + mp.y*0.5, mp.z - Math.cos(yaw)*6);
+  lookAt.set(mp.x - Math.sin(yaw)*6, 0.8 + mp.y*0.5, mp.z - Math.cos(yaw)*6);
   camera.lookAt(lookAt);
 }
 camPos.set(p1.position.x, 5, p1.position.z + 6);
@@ -2242,7 +2335,7 @@ function loopBody(){
       moveFighter(p2f, p1f, inMenu ? NO_INPUT : readInput(1), gdt, false);
     }
   }
-  separate(); updateSparks(dt); updateWalls(gdt); updateSpecials(gdt); updateItems(gdt); updateProjectiles(gdt); updateDmg(dt);
+  separate(); updateSparks(dt); updateWalls(gdt); updateSpecials(gdt); updateItems(gdt); updateWorld(gdt); updateProjectiles(gdt); updateDmg(dt);
   updateCamera(dt); updateAimDot();
   padTimer += dt; if (padTimer > 1) { padTimer = 0; updatePads(); }
   renderer.render(scene, camera);
