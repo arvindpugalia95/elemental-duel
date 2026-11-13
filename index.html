@@ -23,7 +23,7 @@
   .hp { height:16px; background:rgba(0,0,0,.6); border:2px solid rgba(255,255,255,.85); border-radius:5px; margin-top:5px; overflow:hidden; }
   .hp i { display:block; height:100%; width:100%; }
   .l .hp i { background:#e8552e; } .r .hp i { background:#3a9be0; margin-left:auto; }
-  .mp { height:10px; width:75%; background:rgba(0,0,0,.6); border:2px solid rgba(255,255,255,.75); border-radius:4px; margin-top:4px; overflow:hidden; } .r .mp { margin-left:auto; }
+  .mp { height:14px; width:100%; background:rgba(0,0,0,.6); border:2px solid rgba(255,255,255,.75); border-radius:4px; margin-top:4px; overflow:hidden; } .r .mp { margin-left:auto; }
   .mp i { display:block; height:100%; width:100%; background:linear-gradient(90deg,#2f8cff,#7ae0ff); transition:width .1s; }
   .bar .lbl { font:700 10px system-ui, sans-serif; color:#fff; text-shadow:0 1px 2px #000; letter-spacing:1px; margin-top:2px; } .r .mp i { margin-left:auto; }
   .bar.l2, .bar.r2 { top:calc(env(safe-area-inset-top,0px) + 92px); display:none; }
@@ -633,6 +633,61 @@ function aiFor(f, tgt, L, dt){   // CPU brain for any fighter (used for survival
 
 // ---------- Survival mode: waves of CPU enemies keep spawning, fight as long as you can ----------
 let SURV = null;
+// ---------- Magic items: power-ups that appear around the arena for everyone ----------
+const ITEMS = [];
+let itemT = 3;
+const ITEM_TYPES = [
+  { k:'energy', c:0x3fb8ff, css:'#7fd0ff', txt:'+60 ENERGY',       fn:f => { f.mp = Math.min(100, f.mp + 60); } },
+  { k:'health', c:0x4fe36a, css:'#8af59a', txt:'+30 HEALTH',       fn:f => { f.hp = Math.min(100, f.hp + 30); f.hpEl.style.width = f.hp + '%'; } },
+  { k:'power',  c:0xff4d3d, css:'#ff8a7a', txt:'POWER ×1.5 (10s)', fn:f => { f.powerT = 10; } },
+  { k:'speed',  c:0xffd23f, css:'#ffe27a', txt:'SPEED UP (10s)',   fn:f => { f.speedT = 10; } },
+  { k:'shield', c:0xffffff, css:'#ffffff', txt:'SHIELD ×3',        fn:f => { f.shieldHits = 3; } },
+  { k:'magic',  c:0xb46cff, css:'#d8a8ff', txt:'UNLIMITED MAGIC (8s)', fn:f => { f.freeMagicT = 8; } }
+];
+const ITEM_GEO = new THREE.IcosahedronGeometry(0.32, 0);
+function spawnItem(){
+  for (let tries = 0; tries < 12; tries++){
+    const x = (Math.random() - 0.5)*(AW - 12), z = (Math.random() - 0.5)*(AD - 12);
+    if (hitsObstacle(new THREE.Vector3(x, 0.5, z))) continue;
+    const type = ITEM_TYPES[Math.floor(Math.random()*ITEM_TYPES.length)], g = new THREE.Group();
+    const gem = new THREE.Mesh(ITEM_GEO, new THREE.MeshBasicMaterial({ color:type.c })); gem.add(new THREE.Mesh(ITEM_GEO, inkMat(0.004)));
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:type.c, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false })); glow.scale.setScalar(1.6);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.6, 32), new THREE.MeshBasicMaterial({ color:type.c, transparent:true, opacity:0.6, side:THREE.DoubleSide, depthWrite:false }));
+    ring.rotation.x = -Math.PI/2; ring.position.y = -0.85;
+    g.add(gem, glow, ring); g.position.set(x, 0.9, z); scene.add(g);
+    ITEMS.push({ g, gem, type, t:Math.random()*6 });
+    for (let k = 0; k < 8; k++) puff(g.position, type.c, 0.3, (Math.random() - 0.5)*4, Math.random()*3, (Math.random() - 0.5)*4, 0.3);
+    return;
+  }
+}
+function updateItems(dt){
+  if (!gameMode || isNet()){ if (ITEMS.length){ ITEMS.forEach(it => scene.remove(it.g)); ITEMS.length = 0; } return; }
+  itemT -= dt;
+  if (itemT <= 0){ itemT = 5; if (ITEMS.length < 6) spawnItem(); }
+  for (let i = ITEMS.length - 1; i >= 0; i--){
+    const it = ITEMS[i]; it.t += dt;
+    it.g.position.y = 0.9 + Math.sin(it.t*3)*0.15; it.gem.rotation.y += dt*2.5; it.gem.rotation.x += dt*1.3;
+    for (const f of FIGHTERS){
+      if (!f.active || f.hp <= 0 || f.remote) continue;
+      const dx = f.root.position.x - it.g.position.x, dz = f.root.position.z - it.g.position.z;
+      if (dx*dx + dz*dz < 1.4 && f.root.position.y < 3){
+        it.type.fn(f); dmgText(f.root.position, it.type.txt, it.type.css); sfx.deflect(true);
+        for (let k = 0; k < 14; k++){ const a = k/14*Math.PI*2; puff(it.g.position, k % 2 ? 0xffffff : it.type.c, 0.35, Math.cos(a)*6, 2 + Math.random()*3, Math.sin(a)*6, 0.35); }
+        scene.remove(it.g); ITEMS.splice(i, 1); break;
+      }
+    }
+  }
+  // show your active power-ups under your bars
+  const me = p1f, lbl = document.querySelector('.bar.l .lbl');
+  if (lbl){
+    const b = [];
+    if (me.powerT > 0) b.push('🔴 POWER ' + Math.ceil(me.powerT) + 's');
+    if (me.speedT > 0) b.push('🟡 SPEED ' + Math.ceil(me.speedT) + 's');
+    if (me.shieldHits > 0) b.push('⚪ SHIELD ×' + me.shieldHits);
+    if (me.freeMagicT > 0) b.push('🟣 MAGIC ∞ ' + Math.ceil(me.freeMagicT) + 's');
+    lbl.textContent = b.length ? b.join(' · ') : 'HEALTH · ENERGY';
+  }
+}
 // ---------- Elements: choose your power; each element has its own special move ----------
 const EL_LIST = ['fire', 'ice', 'earth', 'storm'];
 const EL_NAME = { fire:'Kaen (Fire)', ice:'Hyoga (Ice)', earth:'Gaia (Earth)', storm:'Raiden (Storm)' };
@@ -1236,7 +1291,7 @@ function showMenu(page){
     box.innerHTML = '<table><tr><th>Action</th><th>Controller</th><th>Keyboard + mouse</th><th>Player 2 keys</th></tr>' +
       rows.map(r => '<tr>' + r.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('') + '</table>';
     const tips = document.createElement('div'); tips.className = 'tips';
-    tips.innerHTML = '<b>Special moves:</b> X while running = dash punch · X in the air = dive kick · RT in the air = triple fireball spread · roll then RT = fire wave · deflect just before a shot hits = PERFECT · <b>punch/kick then press the special within 1.5 s = COMBO ULTIMATE</b>.<br>' +
+    tips.innerHTML = '<b>Special moves:</b> X while running = dash punch · X in the air = dive kick · RT in the air = triple fireball spread · roll then RT = fire wave · deflect just before a shot hits = PERFECT · <b>punch/kick then press the special within 1.5 s = COMBO ULTIMATE</b>.<br><b>Magic items</b> appear around the arena: walk into them! 🔵 energy · 🟢 health · 🔴 power ×1.5 · 🟡 speed · ⚪ shield · 🟣 unlimited magic.<br>' +
       '<b>Online:</b> everyone uses the controller or the main keyboard keys. <b>2 Players:</b> Player 2 uses a second controller or the Player 2 keys.';
     menuBtns.appendChild(box); menuBtns.appendChild(tips);
   }
@@ -1262,6 +1317,8 @@ function resetFighters(){
   });
   for (const s of shots) scene.remove(s.g); shots.length = 0;
   for (const w of walls) scene.remove(w.g); walls.length = 0;
+  ITEMS.forEach(it => scene.remove(it.g)); ITEMS.length = 0; itemT = 3;
+  FIGHTERS.forEach(f => { f.powerT = f.speedT = f.freeMagicT = 0; f.shieldHits = 0; });
   p1f.net = p2f.net = null;
 }
 function startGame(mode, level){
@@ -1380,7 +1437,7 @@ function handPos(f, aim, side){
 function startMelee(f, anim, ts, busy, atk, lunge){
   sfx.swing(atk.dmg >= 10);
   play(f, anim, 0.04, true); f.actions[f.cur].setEffectiveTimeScale(ts);
-  f.busy = busy; f.hitDone = false; f.attack = Object.assign({ t:0 }, atk);
+  f.busy = busy; f.hitDone = false; f.attack = Object.assign({ t:0 }, atk, f.powerT > 0 ? { dmg:Math.round(atk.dmg*1.5) } : {});
   f.vel.addScaledVector(toOpp, lunge);
 }
 function moveFighter(f, o, inp, dt, isP1){
@@ -1393,9 +1450,11 @@ function moveFighter(f, o, inp, dt, isP1){
   f.comboT -= dt; f.chainT -= dt; f.sinceRoll += dt; f.cd = Math.max(0, f.cd - dt);
   f.deflectT = Math.max(0, f.deflectT - dt); f.dcd = Math.max(0, f.dcd - dt);
   f.slowT = Math.max(0, (f.slowT || 0) - dt);
+  f.powerT = Math.max(0, (f.powerT || 0) - dt); f.speedT = Math.max(0, (f.speedT || 0) - dt); f.freeMagicT = Math.max(0, (f.freeMagicT || 0) - dt);
+  if (f.freeMagicT > 0) f.mp = 100;
   if (f.frozen > 0){ f.frozen -= dt; if (f.frozen <= 0){ f.frozen = 0; f.stun = Math.min(f.stun, 0.1); if (f.iceBlock){ f.root.remove(f.iceBlock); f.iceBlock = null; explodeDust(f.root.position, 'ice'); } } }
   f.blocking = !!inp.deflect && f.hp > 0 && f.stun === 0 && f.busy === 0;   // hold block = take much less melee damage
-  f.mp = Math.min(100, (f.mp ?? 100) + dt*(f.charging ? 0 : 7));
+  f.mp = Math.min(100, (f.mp ?? 100) + dt*(f.charging ? 0 : 12));   // faster energy refill
   if (f.mpEl) f.mpEl.style.width = f.mp + '%';
   // deflect: LB / LT opens a short window that bounces fireballs and ice balls back
   if (f.stun === 0 && f.hp > 0 && f.cur !== 'Roll' && f.dcd === 0 && pressed(f, inp, 'deflect')){
@@ -1516,7 +1575,7 @@ function moveFighter(f, o, inp, dt, isP1){
   if (f.cur === 'Roll' && f.busy > 0) want.copy(f.rollDir).multiplyScalar(14);
   else if (f.attack && f.attack.name === 'dive' && !f.onGround) want.copy(f.vel);
   else if (f.busy > 0 || f.stun > 0 || f.hp <= 0) want.set(0,0,0);
-  else want.copy(fwd).multiplyScalar(-inp.y).addScaledVector(right, inp.x).multiplyScalar(RUN*slow*sprint*(f.flying ? 1.15 : 1));
+  else want.copy(fwd).multiplyScalar(-inp.y).addScaledVector(right, inp.x).multiplyScalar(RUN*slow*sprint*(f.flying ? 1.15 : 1)*(f.speedT > 0 ? 1.4 : 1));
   f.vel.lerp(want, 1 - Math.exp(-(f.stun > 0 ? 3 : f.busy > 0 && f.cur !== 'Roll' ? 6 : ACCEL)*dt));
   f.root.position.addScaledVector(f.vel, dt);
   if (f.flying){   // hover: hold jump to rise, C / click left stick to go down, otherwise stay in the air
@@ -1549,7 +1608,7 @@ function moveFighter(f, o, inp, dt, isP1){
     f.attack.t += dt;
     if (f.attack.t >= f.attack.at){
       f.hitDone = true;
-      if (dist < f.attack.range && o.iframes === 0 && o.hp > 0 && Math.abs(o.root.position.y - f.root.position.y) < 1.8){ hit(o, f.attack, toOpp); f.lastMelee = performance.now(); }
+      if (dist < f.attack.range && o.iframes === 0 && o.hp > 0 && Math.abs(o.root.position.y - f.root.position.y) < 1.8){ hit(o, f.attack, toOpp); f.lastMelee = performance.now(); f.mp = Math.min(100, f.mp + 6); }
     }
   }
 
@@ -1569,12 +1628,14 @@ function moveFighter(f, o, inp, dt, isP1){
   }
   f.mixer.update(f.frozen > 0 ? 0 : dt); supermanPose(f);
   f.aura.material.opacity = 0.4 + Math.sin(performance.now()/200)*0.15;
+  if (f.powerT > 0 || f.speedT > 0 || f.shieldHits > 0 || f.freeMagicT > 0) f.aura.material.opacity = 0.7 + Math.sin(performance.now()/70)*0.3;   // glowing while powered up
   sfx.charge(f, f.charging && f.hp > 0 ? f.charge : -1);
   f.prev = inp;
 }
 let hitstop = 0;
 function hit(o, atk, dir){
   if (o.hp <= 0) return;
+  if (o.shieldHits > 0 && !o.remote){ o.shieldHits--; atk = Object.assign({}, atk, { dmg:Math.max(1, Math.round(atk.dmg*0.2)), kb:atk.kb*0.3, launch:0, heavy:false, freeze:false }); dmgText(o.root.position, 'SHIELD ' + o.shieldHits, '#ffffff'); }
   if (o.frozen > 0 && !atk.freeze){   // hitting a frozen enemy deals bonus damage; a heavy hit shatters the ice
     atk = Object.assign({}, atk, { dmg:atk.dmg + (atk.heavy ? 8 : 3) });
     if (atk.heavy){ o.frozen = 0.001; dmgText(o.root.position, 'SHATTER!', '#bff0ff'); }
@@ -1780,7 +1841,7 @@ function shoot(owner, target, pos, dir, opt = {}){
   g.add(glow, body);
   g.position.copy(pos); g.lookAt(pos.clone().add(dir)); scene.add(g);
   shots.push({ g, body, glow, owner, target, vel:dir.clone().multiplyScalar((opt.speed || 30)*(e.spd || 1)), life:1.8, e, trailT:0, age:0, sc,
-    dmg:Math.max(1, (opt.dmg ?? e.dmg) + (e.dmgB || 0)), kb:(opt.kb ?? e.kb) + (e.kbB || 0), freeze:!!opt.freeze, rock:!!opt.rock, launch:opt.launch || 0, heavy:!!opt.heavy, aoe:opt.aoe || 0, sid, auth });
+    dmg:Math.round(Math.max(1, (opt.dmg ?? e.dmg) + (e.dmgB || 0)) * (owner.powerT > 0 ? 1.5 : 1)), kb:(opt.kb ?? e.kb) + (e.kbB || 0), freeze:!!opt.freeze, rock:!!opt.rock, launch:opt.launch || 0, heavy:!!opt.heavy, aoe:opt.aoe || 0, sid, auth });
   for (let i = 0; i < 8; i++)
     puff(pos, e.c[i % 3], 0.6*sc, dir.x*6 + (Math.random()-0.5)*5, Math.random()*3, dir.z*6 + (Math.random()-0.5)*5, 0.18, e.c);
 }
@@ -2179,7 +2240,7 @@ function loopBody(){
       moveFighter(p2f, p1f, inMenu ? NO_INPUT : readInput(1), gdt, false);
     }
   }
-  separate(); updateSparks(dt); updateWalls(gdt); updateSpecials(gdt); updateProjectiles(gdt); updateDmg(dt);
+  separate(); updateSparks(dt); updateWalls(gdt); updateSpecials(gdt); updateItems(gdt); updateProjectiles(gdt); updateDmg(dt);
   updateCamera(dt); updateAimDot();
   padTimer += dt; if (padTimer > 1) { padTimer = 0; updatePads(); }
   renderer.render(scene, camera);
