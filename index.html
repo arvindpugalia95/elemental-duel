@@ -1506,7 +1506,7 @@ function readInput(idx){
 }
 
 // ---------- Movement + melee (lock-on, Flowbound-style strafing) ----------
-const RUN = 9, ACCEL = 16, JUMP = 10.5, GRAV = 30, LIMIT = AW/2 - 1.6;
+const RUN = 6.3, ACCEL = 16, JUMP = 10.5, GRAV = 30, LIMIT = AW/2 - 1.6;
 const fwd = new THREE.Vector3(), right = new THREE.Vector3(), want = new THREE.Vector3(), toOpp = new THREE.Vector3();
 let shake = 0;
 function pressed(f, inp, k){ const p = inp[k] && !f.prev[k]; return p; }
@@ -1719,7 +1719,7 @@ function moveFighter(f, o, inp, dt, isP1){
       const fx = f.vel.x/sp, fz = f.vel.z/sp, fwdDot = fx*toOpp.x + fz*toOpp.z, side = fx*toOpp.z - fz*toOpp.x;
       const name = fwdDot > 0.5 ? 'Run' : fwdDot < -0.5 ? 'Run_Back' : side > 0 ? 'Run_Left' : 'Run_Right';
       play(f, f.actions[name] ? name : 'Run');
-      f.actions[f.cur].setEffectiveTimeScale(Math.max(0.6, sp / 8));
+      f.actions[f.cur].setEffectiveTimeScale(Math.max(0.6, sp / 5.6));
     }
   }
   f.mixer.update(f.frozen > 0 ? 0 : dt); supermanPose(f);
