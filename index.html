@@ -26,6 +26,8 @@
   .mp { height:10px; width:75%; background:rgba(0,0,0,.6); border:2px solid rgba(255,255,255,.75); border-radius:4px; margin-top:4px; overflow:hidden; } .r .mp { margin-left:auto; }
   .mp i { display:block; height:100%; width:100%; background:linear-gradient(90deg,#2f8cff,#7ae0ff); transition:width .1s; }
   .bar .lbl { font:700 10px system-ui, sans-serif; color:#fff; text-shadow:0 1px 2px #000; letter-spacing:1px; margin-top:2px; } .r .mp i { margin-left:auto; }
+  .bar.l2, .bar.r2 { top:calc(env(safe-area-inset-top,0px) + 92px); display:none; }
+  .l2 .hp i { background:#4fc24a !important; } .r2 .hp i { background:#a45cff !important; }
   .tip { position:absolute; bottom:calc(env(safe-area-inset-bottom,0px) + 14px); font-size:12px; color:#fff;
     background:rgba(0,0,0,.55); padding:6px 12px; border-radius:14px; white-space:nowrap; }
   #pads { left:16px; } #help { right:16px; }
@@ -60,6 +62,8 @@
   <div class="bar l"><b>Kaen</b><div class="hp"><i></i></div><div class="mp"><i></i></div><div class="lbl">HEALTH · ENERGY</div></div>
   <div id="round"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="sep"></span><span class="dot"></span><span class="dot"></span></div><small id="score">Kaen 0 – 0 Hyoga</small></div>
   <div class="bar r"><b>Hyoga</b><div class="hp"><i></i></div><div class="mp"><i></i></div><div class="lbl">HEALTH · ENERGY</div></div>
+  <div class="bar l l2"><b>Gaia</b><div class="hp"><i></i></div><div class="mp"><i></i></div></div>
+  <div class="bar r r2"><b>Raiden</b><div class="hp"><i></i></div><div class="mp"><i></i></div></div>
   <div id="pads" class="tip">No controller found – press any button on your controller</div>
   <div id="help" class="tip">X×3 combo · Y heavy kick · RT tap×3 fire combo · hold RT charge · LT wall · LB deflect · B roll · A jump</div>
 </div>
@@ -391,7 +395,7 @@ function masterClips(){
   });
   return masterClipsP;
 }
-const ELEMENT_TINT = { fire:0xffd6cc, ice:0xd2e6ff };
+const ELEMENT_TINT = { fire:0xffd6cc, ice:0xd2e6ff, earth:0xd8ffd0, storm:0xead6ff };
 function makeFighter(element, tint, startPos, hpEl, charKey = 'ch24'){
   const f = { root:new THREE.Group(), vel:new THREE.Vector3(), vy:0, onGround:true, mixer:null, actions:{}, cur:null, ready:false,
               element, cd:0, busy:0, hitDone:true, mats:[], flash:0, deflectT:0, dcd:0, wcd:0, comboT:0, chainT:0, chain:0, sinceRoll:9, holdT:0, charge:0, charging:false, down:false, hitSide:false, hp:100, mp:100, hpEl, prev:{}, combo:0, stun:0, iframes:0, rollDir:new THREE.Vector3() };
@@ -458,7 +462,7 @@ function supermanPose(f){
 // small, subtle aim dot showing where your shots will go
 const aimEl = document.getElementById('aim'), _aim = new THREE.Vector3(), _ap = new THREE.Vector3();
 function updateAimDot(){
-  const me = gameMode === 'online' ? ME : p1f, them = me === p1f ? p2f : p1f;
+  const me = isNet() ? ME : p1f, them = nearestFoe(me);
   if (!gameMode || !me || !me.ready || me.hp <= 0){ aimEl.style.display = 'none'; return; }
   aimDir(me, true, _aim);
   const start = handPos(me, _aim, 0);
@@ -486,6 +490,24 @@ function noEnergy(f){   // not enough energy: short message, no shot
 }
 const p1f = makeFighter('fire', 0xff5a2a, new THREE.Vector3(0, 0, 8), hpEls[0]);
 const p2f = makeFighter('ice',  0x3a9be0, new THREE.Vector3(0, 0, -6), hpEls[1], window.ED_ASSETS.characters.ch45 ? 'ch45' : 'ch24');
+const p3f = makeFighter('earth', 0x4fc24a, new THREE.Vector3(8, 0, 1), hpEls[2], 'ch24');
+const p4f = makeFighter('storm', 0xa45cff, new THREE.Vector3(-8, 0, 1), hpEls[3], window.ED_ASSETS.characters.ch45 ? 'ch45' : 'ch24');
+const FIGHTERS = [p1f, p2f, p3f, p4f], FIGHTER_NAMES = ['Kaen', 'Hyoga', 'Gaia', 'Raiden'];
+FIGHTERS.forEach((f, i) => { f.pid = i; f.mpEl = mpEls[i]; f.active = i < 2; f.root.visible = f.active; });
+// nearest living opponent (works for 1 vs 1 and free-for-all)
+function nearestFoe(f){
+  let best = null, bd = 1e9;
+  for (const o of FIGHTERS){ if (o === f || !o.active) continue;
+    const d = o.root.position.distanceToSquared(f.root.position) + (o.hp > 0 ? 0 : 1e6);
+    if (d < bd){ bd = d; best = o; } }
+  return best || (f === p1f ? p2f : p1f);
+}
+function nearestFoeTo(pos, owner){
+  let best = null, bd = 1e9;
+  for (const o of FIGHTERS){ if (o === owner || !o.active || o.hp <= 0) continue;
+    const d = o.root.position.distanceToSquared(pos); if (d < bd){ bd = d; best = o; } }
+  return best;
+}
 const p1 = p1f.root, p2 = p2f.root;
 
 // ---------- Input ----------
@@ -537,6 +559,7 @@ function aiInput(){
 }
 // ---------- Online multiplayer (peer-to-peer via PeerJS, auto matchmaking) ----------
 let NET = null, ME = null, THEM = null, netSendT = 0, netSearch = 0;
+function isNet(){ return gameMode === 'online' || gameMode === 'ffa'; }
 const LOBBY = 'elementalduel-apg-v1-';
 function netStatus(t){ const el = document.getElementById('netStatus'); if (el) el.textContent = t; }
 function netStop(){
@@ -544,7 +567,116 @@ function netStop(){
   if (NET){ try { NET.conn && NET.conn.close(); } catch(e){} try { NET.peer && NET.peer.destroy(); } catch(e){} }
   NET = null;
 }
-function send(m){ if (NET && NET.conn && NET.conn.open) NET.conn.send(m); }
+function send(m){
+  if (!NET) return;
+  if (NET.ffa){   // free-for-all: guests talk to the host, the host passes everything on to everyone
+    m.pid = NET.pid;
+    if (NET.host) NET.conns.forEach(c => c.conn.open && c.conn.send(m));
+    else if (NET.conn && NET.conn.open) NET.conn.send(m);
+    return;
+  }
+  if (NET.conn && NET.conn.open) NET.conn.send(m);
+}
+// ---------- Free-for-all (up to 4 online players): the first player hosts, the others join ----------
+const FFA_LOBBY = 'elementalduel-apg-ffa-v1-';
+function findFFA(){
+  if (typeof Peer === 'undefined'){ netStatus('Online play needs the hosted version of the game.'); return; }
+  const inp = document.getElementById('nameIn');
+  const name = (inp && inp.value.trim()) || 'Player';
+  try { localStorage.setItem('ed-name', name); } catch(e){}
+  if (inp) inp.blur();
+  sfx.unlock(); netStop();
+  const my = netSearch;
+  netStatus('Looking for a free-for-all lobby…');
+  (async () => {
+    for (let k = 0; k < 8; k++){
+      if (my !== netSearch) return;
+      if (await tryJoinFFA(k, name, my)) return;
+      if (my !== netSearch) return;
+      const r = await tryHostFFA(k, name, my);
+      if (r === 'host') return;
+    }
+    if (my === netSearch) netStatus('Could not reach the match server. Check your internet and try again.');
+  })();
+}
+function ffaLobbyUI(){
+  if (!NET || !NET.ffa) return;
+  netStatus('Free-for-all lobby (' + NET.players.length + '/4): ' + NET.players.map(p => p.name).join(', ') + ' — share the link! Press Start when ready (min 2).');
+  if (NET.host && !document.getElementById('ffaStart')){
+    const b = document.createElement('button'); b.id = 'ffaStart'; b.textContent = 'Start match'; b.onclick = startFFAHost;
+    menuBtns.insertBefore(b, menuBtns.firstChild); menuItems.unshift({ b, fn:startFFAHost }); menuSel = 0; markSel();
+  }
+}
+function ffaBroadcastLobby(){
+  const names = NET.players.map(p => p.name);
+  NET.conns.forEach(c => c.conn.open && c.conn.send({ t:'lobby', names }));
+  ffaLobbyUI();
+}
+function startFFAHost(){
+  if (!NET || !NET.host || NET.started) return;
+  if (NET.players.length < 2){ netStatus('Need at least 2 players to start. Share the link!'); return; }
+  NET.started = true;
+  const players = NET.players.slice();
+  NET.conns.forEach(c => c.conn.open && c.conn.send({ t:'start', players }));
+  beginFFA(players);
+}
+function beginFFA(players){ NET.started = true; NET.players = players; startGame('ffa'); }
+function tryHostFFA(k, name, my){
+  return new Promise(res => {
+    const peer = new Peer(FFA_LOBBY + k, { debug:0 });
+    let done = false;
+    peer.on('open', () => {
+      if (my !== netSearch){ peer.destroy(); return res('stop'); }
+      done = true; NET = { peer, host:true, ffa:true, pid:0, name, conns:[], players:[{ pid:0, name }], started:false };
+      ffaLobbyUI(); res('host');
+    });
+    peer.on('connection', conn => {
+      conn.on('open', () => {
+        if (!NET || NET.peer !== peer || NET.started || NET.players.length >= 4){ conn.send({ t:'busy' }); setTimeout(() => conn.close(), 300); return; }
+        const pid = [1, 2, 3].find(p => !NET.players.some(q => q.pid === p));
+        const c = { conn, pid }; NET.conns.push(c);
+        conn.on('data', m => {
+          if (m.t === 'join'){ NET.players.push({ pid, name:m.name }); conn.send({ t:'welcome', pid }); ffaBroadcastLobby(); if (NET.players.length === 4) startFFAHost(); return; }
+          m.pid = pid;
+          NET.conns.forEach(o => { if (o !== c && o.conn.open) o.conn.send(m); });   // relay to everyone else
+          onNet(m);
+        });
+        conn.on('close', () => {
+          if (!NET || !NET.ffa) return;
+          NET.conns = NET.conns.filter(o => o !== c); NET.players = NET.players.filter(p => p.pid !== pid);
+          if (!NET.started) ffaBroadcastLobby();
+          else { const f = FIGHTERS[pid]; if (f){ f.hp = 0; f.hpEl.style.width = '0%'; f.root.visible = false; } }
+        });
+      });
+    });
+    peer.on('error', err => { if (!done){ done = true; peer.destroy(); res(err.type === 'unavailable-id' ? 'taken' : 'error'); } });
+    setTimeout(() => { if (!done){ done = true; peer.destroy(); res('error'); } }, 8000);
+  });
+}
+function tryJoinFFA(k, name, my){
+  return new Promise(res => {
+    const peer = new Peer({ debug:0 });
+    let done = false;
+    const fail = () => { if (!done){ done = true; try { peer.destroy(); } catch(e){} res(false); } };
+    peer.on('open', () => {
+      if (my !== netSearch) return fail();
+      const conn = peer.connect(FFA_LOBBY + k, { serialization:'json', reliable:true });
+      conn.on('data', m => {
+        if (done) return;
+        if (m.t === 'busy') return fail();
+        if (m.t === 'welcome'){
+          done = true; NET = { peer, host:false, ffa:true, conn, pid:m.pid, name, players:[] };
+          conn.on('data', onNet);
+          conn.on('close', () => { if (isNet()){ gameMode = null; resetFighters(); showMenu('online'); netStatus('The host left the match.'); } });
+          netStatus('Joined the lobby! Waiting for the host to start…'); res(true);
+        }
+      });
+      conn.on('open', () => conn.send({ t:'join', name }));
+    });
+    peer.on('error', fail);
+    setTimeout(fail, 5000);
+  });
+}
 function findMatch(){
   if (typeof Peer === 'undefined'){ netStatus('Online play needs the hosted version of the game.'); return; }
   const inp = document.getElementById('nameIn');
@@ -613,7 +745,7 @@ function tryJoin(k, name, my){
 function wireConn(conn, isGuest){
   conn.on('data', onNet);
   conn.on('close', () => {
-    if (gameMode === 'online'){ gameMode = null; resetFighters(); showMenu('online'); netStatus('Your opponent left the match.'); }
+    if (isNet()){ gameMode = null; resetFighters(); showMenu('online'); netStatus('Your opponent left the match.'); }
   });
 }
 function beginOnline(){ startGame('online'); }
@@ -623,10 +755,13 @@ function onNet(m){
   switch (m.t){
     case 'join': if (NET.host){ NET.opp = m.name; send({ t:'welcome', name:NET.name }); beginOnline(); } break;
     case 'hello': NET.opp = m.name; break;
-    case 's': THEM.net = m; break;
+    case 's': (m.pid != null ? FIGHTERS[m.pid] : THEM).net = m; break;
+    case 'lobby': netStatus('Free-for-all lobby (' + m.names.length + '/4): ' + m.names.join(', ') + ' — waiting for the host to start'); break;
+    case 'start': beginFFA(m.players); break;
     case 'shoot': {
       const pos = new THREE.Vector3(...m.pos), dir = new THREE.Vector3(...m.dir);
-      shoot(THEM, ME, pos, dir, Object.assign({}, m.opt, { sid:m.sid, remote:true }));
+      const ow = m.pid != null ? FIGHTERS[m.pid] : THEM;
+      shoot(ow, nearestFoe(ow), pos, dir, Object.assign({}, m.opt, { sid:m.sid, remote:true }));
       break;
     }
     case 'shotEnd': {
@@ -648,8 +783,8 @@ function onNet(m){
       if (a && b){ clash(a, b); } [a, b].forEach(p => { if (p){ killShot(p); shots.splice(shots.indexOf(p), 1); } });
       break;
     }
-    case 'hit': hit(ME, m.atk, new THREE.Vector3(...m.dir)); break;
-    case 'wall': createWall(THEM, new THREE.Vector3(...m.n), new THREE.Vector3(...m.c), m.wid); break;
+    case 'hit': if (!NET.ffa || m.to === NET.pid) hit(ME, m.atk, new THREE.Vector3(...m.dir)); break;
+    case 'wall': createWall(m.pid != null ? FIGHTERS[m.pid] : THEM, new THREE.Vector3(...m.n), new THREE.Vector3(...m.c), m.wid); break;
     case 'wallHit': { const w = walls.find(w => w.wid === m.wid); if (w){ w.hp -= 1; w.flash = 0.1; } break; }
   }
 }
@@ -667,7 +802,7 @@ function updatePuppet(f, dt){
     let d = m.r - f.root.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d)); f.root.rotation.y += d*k;
     if (m.a && (m.a !== f.cur || m.n !== f.lastN)){ f.lastN = m.n; const before = f.animN; play(f, m.a, 0.08, true); f.animN = before; }
     if (f.cur && f.actions[f.cur]) f.actions[f.cur].setEffectiveTimeScale(m.ts || 1);
-    if (m.mp != null){ f.mp = m.mp; const mpb = f === p1f ? mpEls[0] : mpEls[1]; if (mpb) mpb.style.width = f.mp + '%'; }
+    if (m.mp != null){ f.mp = m.mp; if (f.mpEl) f.mpEl.style.width = f.mp + '%'; }
     if (m.hp !== f.hp){ f.hp = m.hp; f.hpEl.style.width = f.hp + '%'; }
     f.iframes = m.i ? 1 : 0; f.deflectT = m.d; f.down = !!m.dn;
     f.charging = m.ch >= 0; f.charge = Math.max(0, m.ch);
@@ -698,7 +833,7 @@ function showMenu(page){
     : page === 'controls'
     ? [['Back', () => showMenu('mode')]]
     : page === 'online'
-    ? [['Find match', () => findMatch()], ['Back', () => showMenu('mode')]]
+    ? [['Find 1 vs 1 match', () => findMatch()], ['Free-for-all (up to 4)', () => findFFA()], ['Back', () => showMenu('mode')]]
     : [['Easy', () => startGame('cpu', 'Easy')], ['Normal', () => startGame('cpu', 'Normal')], ['Hard', () => startGame('cpu', 'Hard')], ['Back', () => showMenu('mode')]];
   menuSub.textContent = page === 'mode' ? 'Choose a mode' : page === 'online' ? 'Enter your name' : page === 'controls' ? 'Controls' : 'Choose difficulty';
   if (page === 'controls'){
@@ -746,7 +881,7 @@ function showMenu(page){
 }
 function markSel(){ sfx.click(); menuItems.forEach((m, i) => m.b.classList.toggle('sel', i === menuSel)); }
 function resetFighters(){
-  [[p1f, 0, 8], [p2f, 0, -6]].forEach(([f, x, z]) => {
+  [[p1f, 0, 8], [p2f, 0, -6], [p3f, 8, 1], [p4f, -8, 1]].forEach(([f, x, z]) => {
     f.hp = 100; f.mp = 100; f.hpEl.style.width = '100%'; f.root.position.set(x, 0, z); f.vel.set(0,0,0); f.vy = 0;
     f.stun = 0; f.busy = 0; f.down = false; f.attack = null; f.charging = false; f.charge = 0; f.cd = 0;
     if (f.ready) play(f, 'Idle', 0.2, true);
@@ -758,7 +893,18 @@ function resetFighters(){
 function startGame(mode, level){
   sfx.unlock(); sfx.click();
   gameMode = mode; AIL = LEVELS[level || 'Normal'];
-  ME = p1f; THEM = p2f; p1f.remote = p2f.remote = false;
+  ME = p1f; THEM = p2f;
+  FIGHTERS.forEach((f, i) => { f.remote = false; f.active = i < 2; f.root.visible = f.active; });
+  document.querySelector('.bar.l2').style.display = document.querySelector('.bar.r2').style.display = 'none';
+  if (mode === 'ffa'){
+    const ids = NET.players.map(p => p.pid);
+    FIGHTERS.forEach((f, i) => { f.active = ids.includes(i); f.remote = i !== NET.pid; f.root.visible = f.active; });
+    ME = FIGHTERS[NET.pid]; THEM = nearestFoe(ME);
+    const labels = document.querySelectorAll('.bar b');
+    NET.players.forEach(p => { labels[p.pid].textContent = FIGHTER_NAMES[p.pid] + ' · ' + p.name + (p.pid === NET.pid ? ' (you)' : ''); });
+    if (ids.includes(2)) document.querySelector('.bar.l2').style.display = 'block';
+    if (ids.includes(3)) document.querySelector('.bar.r2').style.display = 'block';
+  }
   document.querySelector('.bar.l b').textContent = 'Kaen';
   document.querySelector('.bar.r b').textContent = mode === 'cpu' ? `Hyoga (CPU · ${level})` : 'Hyoga (P2)';
   if (mode === 'online'){
@@ -807,7 +953,7 @@ function readInput(idx){
     b.wall ||= (pad.buttons[6]?.value || 0) > 0.4;   // LT
   }
   if (idx === 0 && locked()){
-    const me = gameMode === 'online' ? ME : p1f, them = me === p1f ? p2f : p1f;
+    const me = isNet() ? ME : p1f, them = nearestFoe(me);
     const near = me && them && me.root.position.distanceTo(them.root.position) < 3.2;
     if (near) b.punch ||= mouseBtn.shoot; else b.shoot ||= mouseBtn.shoot;   // close = punch/kick combo, far = magic
     b.deflect ||= mouseBtn.deflect;
@@ -827,7 +973,7 @@ function aimDir(f, isP1, out){
   if (isP1){ camera.getWorldDirection(out); out.y = 0; out.normalize(); } else out.copy(toOpp);
   // vertical aim: automatically angle shots up/down toward the opponent's height (hovering above or below),
   // and for the player, tilting the camera up/down (mouse or right stick) aims higher/lower too
-  const o = f === p1f ? p2f : p1f;
+  const o = nearestFoe(f);
   const hd = Math.max(1, Math.hypot(o.root.position.x - f.root.position.x, o.root.position.z - f.root.position.z));
   let slope = (o.root.position.y - f.root.position.y) / hd;
   if (isP1) slope += (0.32 - pitch) * 1.6;
@@ -855,7 +1001,7 @@ function moveFighter(f, o, inp, dt, isP1){
   f.deflectT = Math.max(0, f.deflectT - dt); f.dcd = Math.max(0, f.dcd - dt);
   f.blocking = !!inp.deflect && f.hp > 0 && f.stun === 0 && f.busy === 0;   // hold block = take much less melee damage
   f.mp = Math.min(100, (f.mp ?? 100) + dt*(f.charging ? 0 : 7));
-  { const mpb = f === p1f ? mpEls[0] : mpEls[1]; if (mpb) mpb.style.width = f.mp + '%'; }
+  if (f.mpEl) f.mpEl.style.width = f.mp + '%';
   // deflect: LB / LT opens a short window that bounces fireballs and ice balls back
   if (f.stun === 0 && f.hp > 0 && f.cur !== 'Roll' && f.dcd === 0 && pressed(f, inp, 'deflect')){
     sfx.swing(false); f.deflectT = 0.28; f.dcd = 0.65; f.busy = Math.max(f.busy, 0.3); f.charging = false; f.attack = null;
@@ -1027,7 +1173,7 @@ function hit(o, atk, dir){
   sfx.hit(!!atk.heavy);
   if (o.remote){
     // online: the other player's game applies the damage; show the impact here right away
-    send({ t:'hit', atk:{ dmg:atk.dmg, kb:atk.kb, launch:atk.launch || 0, heavy:!!atk.heavy }, dir:[dir.x, dir.y, dir.z] });
+    send({ t:'hit', to:o.pid, atk:{ dmg:atk.dmg, kb:atk.kb, launch:atk.launch || 0, heavy:!!atk.heavy }, dir:[dir.x, dir.y, dir.z] });
     hitstop = atk.heavy ? 0.11 : 0.055; o.flash = 0.09; o.mats.forEach(m => m.emissive && m.emissive.setHex(0xffffff));
     dmgText(o.root.position, atk.dmg, atk.heavy ? '#ffcf3a' : '#ffffff');
     shake = Math.max(shake, atk.heavy ? 0.28 : 0.14); spark(o.root.position, atk.heavy);
@@ -1147,7 +1293,9 @@ void main(){
 }`;
 const ELEM = {
   fire: { c:[0xfffbe0, 0xffd23f, 0xff7b1c, 0xd92a1c], dmg:10, kb:6, rise:2.4, stretch:1.6, wobble:0.16 },
-  ice:  { c:[0xffffff, 0xcff3ff, 0x6fcbff, 0x2a78d0], dmg:9,  kb:4, rise:-0.4, stretch:1.0, wobble:0.07 }
+  ice:  { c:[0xffffff, 0xcff3ff, 0x6fcbff, 0x2a78d0], dmg:9,  kb:4, rise:-0.4, stretch:1.0, wobble:0.07 },
+  earth:{ c:[0xffffff, 0xd8ffb0, 0x6fd34a, 0x2f7d1c], dmg:10, kb:5, rise:0.6, stretch:1.2, wobble:0.12 },
+  storm:{ c:[0xffffff, 0xf0d8ff, 0xb46cff, 0x5a1fa8], dmg:9,  kb:5, rise:1.0, stretch:1.4, wobble:0.14 }
 };
 function fireMat(e){
   return new THREE.ShaderMaterial({ vertexShader:FIRE_VS, fragmentShader:FIRE_FS,
@@ -1183,7 +1331,7 @@ let shotN = 0;
 function shoot(owner, target, pos, dir, opt = {}){
   const sc = opt.scale || 1; sfx.shot(owner.element, sc);
   const auth = !opt.remote, sid = opt.sid || ((NET ? (NET.host ? 'h' : 'g') : 'l') + (shotN++));
-  if (auth && gameMode === 'online') send({ t:'shoot', sid, pos:[pos.x, pos.y, pos.z], dir:[dir.x, dir.y, dir.z],
+  if (auth && isNet()) send({ t:'shoot', sid, pos:[pos.x, pos.y, pos.z], dir:[dir.x, dir.y, dir.z],
     opt:{ scale:opt.scale, dmg:opt.dmg, kb:opt.kb, launch:opt.launch, heavy:opt.heavy, aoe:opt.aoe, speed:opt.speed } });
   const e = ELEM[owner.element], isIce = owner.element === 'ice', g = new THREE.Group();
   // energy-ball look: white-hot core, coloured energy shell, big glow, halo and a glowing streak
@@ -1230,11 +1378,11 @@ const iceShardMat = new THREE.MeshToonMaterial({ color:0xbfeeff, gradientMap:GRA
 const iceShardMat2 = new THREE.MeshToonMaterial({ color:0x7fd2ff, gradientMap:GRAD, emissive:0x1d5a90, emissiveIntensity:0.35 });
 let wallN = 0;
 function createWall(f, n, at, wid){
-  const el = f.element, cfg = WALL[el];
+  const el = f.element, cfg = WALL[el] || WALL.fire;
   const g = new THREE.Group(), inner = new THREE.Group(); g.add(inner);
   const pos = at ? at.clone() : f.root.position.clone().addScaledVector(n, 2.8); pos.y = 0;
   wid = wid || ((NET ? (NET.host ? 'h' : 'g') : 'l') + 'w' + (wallN++));
-  if (!at && gameMode === 'online') send({ t:'wall', wid, n:[n.x, n.y, n.z], c:[pos.x, 0, pos.z] });
+  if (!at && isNet()) send({ t:'wall', wid, n:[n.x, n.y, n.z], c:[pos.x, 0, pos.z] });
   g.position.copy(pos); g.rotation.y = Math.atan2(n.x, n.z);
   const flames = [];
   if (el === 'ice'){
@@ -1289,7 +1437,8 @@ function updateWalls(dt){
     if (w.flash > 0){ w.flash -= dt; w.inner.position.x = (Math.random()-0.5)*0.15; } else w.inner.position.x = 0;
     w.flames.forEach((m, k) => { m.material.uniforms.uTime.value += dt; m.scale.z = 1.2 + Math.sin(w.age*9 + k)*0.25; });
     // fighters: ice wall is solid; fire wall burns the enemy who walks through it
-    for (const f of [p1f, p2f]){
+    for (const f of FIGHTERS){
+      if (!f.active) continue;
       if (f.remote) continue;   // online: each game moves only its own fighter
       _d.subVectors(f.root.position, w.c);
       const a = _d.dot(w.u), b = _d.dot(w.n);
@@ -1371,9 +1520,9 @@ function updateProjectiles(dt){
       const a = shots[i], b = shots[j];
       if (!a || !b || a.owner === b.owner) continue;
       const r = 0.75*(a.sc + b.sc);
-      if (gameMode === 'online' && !NET.host) continue;
+      if (isNet() && !NET.host) continue;
       if (a.g.position.distanceToSquared(b.g.position) < r*r){
-        if (gameMode === 'online') send({ t:'clash', a:a.sid, b:b.sid });
+        if (isNet()) send({ t:'clash', a:a.sid, b:b.sid });
         clash(a, b); killShot(a); killShot(b);
         shots.splice(i, 1); shots.splice(j, 1); i--; break;
       }
@@ -1405,6 +1554,7 @@ function updateProjectiles(dt){
       if (inWall(w, p.g.position, 0.35*p.sc)){ w.hp -= 1; w.flash = 0.1; send({ t:'wallHit', wid:w.wid }); send({ t:'shotEnd', sid:p.sid, pos:[p.g.position.x, p.g.position.y, p.g.position.z], big:false }); explode(p.g.position, p.e, false, p.sc); if (w.el !== p.owner.element) sfx.sizzle(); blocked = true; break; }
     }
     if (blocked){ scene.remove(p.g); p.body.material.dispose(); p.glow.material.dispose(); shots.splice(i, 1); continue; }
+    if (gameMode === 'ffa'){ const nt = nearestFoeTo(p.g.position, p.owner); if (nt) p.target = nt; }
     const t = p.target, tp = t.root.position;
     const dx = p.g.position.x - tp.x, dy = p.g.position.y - (tp.y + 1.05), dz = p.g.position.z - tp.z;
     let done = false;
@@ -1420,7 +1570,7 @@ function updateProjectiles(dt){
       p.vel.copy(aimAt).multiplyScalar(p.vel.length());   // same speed it came in at
       p.g.lookAt(p.g.position.clone().add(aimAt));
       p.dmg = Math.round(p.dmg*1.3); p.life = 1.8; p.sc *= 1.1; p.body.scale.setScalar(p.sc);
-      if (gameMode === 'online') send({ t:'deflect', sid:p.sid, pos:[p.g.position.x, p.g.position.y, p.g.position.z], vel:[p.vel.x, p.vel.y, p.vel.z], dmg:p.dmg, sc:p.sc, perfect });
+      if (isNet()) send({ t:'deflect', sid:p.sid, pos:[p.g.position.x, p.g.position.y, p.g.position.z], vel:[p.vel.x, p.vel.y, p.vel.z], dmg:p.dmg, sc:p.sc, perfect });
       if (!t.remote){ t.deflectT = 0; t.dcd = 0.15; t.busy = 0.1; }
       hitstop = 0.08; shake = Math.max(shake, 0.16);
       spark(p.g.position.clone().setY(p.g.position.y - 1.15), perfect);
@@ -1433,7 +1583,7 @@ function updateProjectiles(dt){
       if (p.aoe && t.hp > 0 && t.iframes === 0 && Math.hypot(dx, dz) < p.aoe) hit(t, atk, new THREE.Vector3(-dx, 0, -dz).normalize());
       explode(p.g.position, p.e, !!p.aoe, p.sc); done = true; p.endBig = !!p.aoe;
     }
-    if (done){ if (gameMode === 'online') send({ t:'shotEnd', sid:p.sid, pos:[p.g.position.x, p.g.position.y, p.g.position.z], big:!!p.endBig }); scene.remove(p.g); p.body.material.dispose(); p.glow.material.dispose(); shots.splice(i, 1); }
+    if (done){ if (isNet()) send({ t:'shotEnd', sid:p.sid, pos:[p.g.position.x, p.g.position.y, p.g.position.z], big:!!p.endBig }); scene.remove(p.g); p.body.material.dispose(); p.glow.material.dispose(); shots.splice(i, 1); }
   }
   for (let i = rings.length - 1; i >= 0; i--){
     const r = rings[i]; r.t += dt; const k = r.t / r.life;
@@ -1452,8 +1602,12 @@ function updateProjectiles(dt){
   }
 }
 function separate(){
-  const dx = p2.position.x - p1.position.x, dz = p2.position.z - p1.position.z, d = Math.hypot(dx, dz), min = 1.3;
-  if (d < min && d > 0.001){ const push = (min - d)/2; p1.position.x -= dx/d*push; p1.position.z -= dz/d*push; p2.position.x += dx/d*push; p2.position.z += dz/d*push; }
+  const A = FIGHTERS.filter(f => f.active);
+  for (let i = 0; i < A.length; i++) for (let j = i + 1; j < A.length; j++){
+    const p1 = A[i].root, p2 = A[j].root;
+    const dx = p2.position.x - p1.position.x, dz = p2.position.z - p1.position.z, d = Math.hypot(dx, dz), min = 1.3;
+    if (d < min && d > 0.001){ const push = (min - d)/2; p1.position.x -= dx/d*push; p1.position.z -= dz/d*push; p2.position.x += dx/d*push; p2.position.z += dz/d*push; }
+  }
 }
 
 // ---------- Third-person camera behind Player 1 ----------
@@ -1552,17 +1706,20 @@ function loopBody(){
   const inMenu = !gameMode;
   if (inMenu) menuPad();
   // K.O. -> back to the menu
-  if (gameMode && (p1f.hp <= 0 || p2f.hp <= 0)){
+  const actF = FIGHTERS.filter(f => f.active), aliveF = actF.filter(f => f.hp > 0);
+  if (gameMode && actF.length >= 2 && aliveF.length <= 1){
     if (koTimer === 0){ document.getElementById('ko').style.display = 'block'; sfx.ko();
-      if (p1f.hp > 0) SCORE[0]++; else if (p2f.hp > 0) SCORE[1]++;
-      document.getElementById('score').textContent = 'Kaen ' + SCORE[0] + ' – ' + SCORE[1] + ' Hyoga';
+      if (aliveF[0]) SCORE[aliveF[0].pid] = (SCORE[aliveF[0].pid] || 0) + 1;
+      document.getElementById('score').textContent = actF.length === 2 ? 'Kaen ' + (SCORE[0]||0) + ' – ' + (SCORE[1]||0) + ' Hyoga'
+        : actF.map(f => FIGHTER_NAMES[f.pid] + ' ' + (SCORE[f.pid] || 0)).join(' · ');
       const dots = document.querySelectorAll('#round .dot'); dots.forEach((d, i) => d.classList.toggle('on', i < 2 ? SCORE[0] > i : SCORE[1] > i - 2)); }
     koTimer += dt;
-    if (koTimer > 3){ koTimer = 0; document.getElementById('ko').style.display = 'none'; const wasOnline = gameMode === 'online'; gameMode = null; resetFighters(); showMenu(wasOnline ? 'online' : 'mode'); }
+    if (koTimer > 3){ koTimer = 0; document.getElementById('ko').style.display = 'none'; const wasOnline = isNet(); gameMode = null; resetFighters(); showMenu(wasOnline ? 'online' : 'mode'); }
   }
-  if (gameMode === 'online'){
+  if (gameMode === 'online' || gameMode === 'ffa'){
+    if (gameMode === 'ffa') THEM = nearestFoe(ME);
     moveFighter(ME, THEM, readInput(0), gdt, true);
-    updatePuppet(THEM, gdt);
+    for (const f of FIGHTERS) if (f.active && f.remote) updatePuppet(f, gdt);
     netSendT += dt; if (netSendT > 1/30){ netSendT = 0; sendState(); }
   } else {
     moveFighter(p1f, p2f, inMenu ? NO_INPUT : readInput(0), gdt, true);
