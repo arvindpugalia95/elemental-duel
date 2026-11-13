@@ -559,6 +559,12 @@ function aiInput(){
 }
 // ---------- Online multiplayer (peer-to-peer via PeerJS, auto matchmaking) ----------
 let NET = null, ME = null, THEM = null, netSendT = 0, netSearch = 0;
+// connection helpers: STUN + free relay (TURN) servers so players on different networks can still connect
+const PEER_OPTS = { debug:0, config:{ iceServers:[
+  { urls:'stun:stun.l.google.com:19302' }, { urls:'stun:global.stun.twilio.com:3478' },
+  { urls:'turn:openrelay.metered.ca:80', username:'openrelayproject', credential:'openrelayproject' },
+  { urls:'turn:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject' },
+  { urls:'turn:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject' } ] } };
 function isNet(){ return gameMode === 'online' || gameMode === 'ffa'; }
 const LOBBY = 'elementalduel-apg-v1-';
 function netStatus(t){ const el = document.getElementById('netStatus'); if (el) el.textContent = t; }
@@ -624,27 +630,33 @@ function createFFA(){
 }
 function browseFFA(){
   if (typeof Peer === 'undefined'){ netStatus('Online play needs the hosted version of the game.'); return; }
-  myName(); sfx.unlock();
+  myName(); sfx.unlock(); netStop();
   BROWSE = []; showMenu('browse');   // (showMenu also stops any old search)
   const my = netSearch, found = [];
   netStatus('Looking for games…');
-  const peer = new Peer({ debug:0 });
+  const peer = new Peer(PEER_OPTS);
   peer.on('error', () => {});
   peer.on('open', () => {
     for (let k = 0; k < 8; k++){
       const conn = peer.connect(FFA_LOBBY + k, { serialization:'json', reliable:true });
       conn.on('open', () => conn.send({ t:'info' }));
-      conn.on('data', m => { if (m.t === 'info' && !m.started && m.n < 4) found.push({ k, host:m.host, n:m.n }); conn.close(); });
+      conn.on('data', m => {
+        if (m.t === 'info' && !m.started && m.n < 4 && my === netSearch && !found.some(g => g.k === k)){
+          found.push({ k, host:m.host, n:m.n });
+          BROWSE = found.slice().sort((a, b) => a.k - b.k); showMenu('browse');   // show games as soon as they're found
+          netStatus('Pick a game to join. (still looking for more…)');
+        }
+        conn.close();
+      });
     }
   });
   setTimeout(() => {
     try { peer.destroy(); } catch(e){}
     if (my !== netSearch) return;
-    BROWSE = found.sort((a, b) => a.k - b.k);
+    BROWSE = found.slice().sort((a, b) => a.k - b.k);
     showMenu('browse');
-    netSearch = my;   // showMenu bumps the search id; keep this list usable
-    netStatus(BROWSE.length ? 'Pick a game to join.' : 'No open games found. Go Back and create one, or Refresh.');
-  }, 3500);
+    netStatus(BROWSE.length ? 'Pick a game to join.' : 'No open games found. Make sure the host clicked "Create free-for-all game", then Refresh.');
+  }, 9000);
 }
 function joinFFASlot(k){
   const name = myName(); netStop();
@@ -676,7 +688,7 @@ function startFFAHost(){
 function beginFFA(players){ NET.started = true; NET.players = players; startGame('ffa'); }
 function tryHostFFA(k, name, my){
   return new Promise(res => {
-    const peer = new Peer(FFA_LOBBY + k, { debug:0 });
+    const peer = new Peer(FFA_LOBBY + k, PEER_OPTS);
     let done = false;
     peer.on('open', () => {
       if (my !== netSearch){ peer.destroy(); return res('stop'); }
@@ -716,7 +728,7 @@ function tryHostFFA(k, name, my){
 }
 function tryJoinFFA(k, name, my){
   return new Promise(res => {
-    const peer = new Peer({ debug:0 });
+    const peer = new Peer(PEER_OPTS);
     let done = false;
     const fail = () => { if (!done){ done = true; try { peer.destroy(); } catch(e){} res(false); } };
     peer.on('open', () => {
@@ -760,7 +772,7 @@ function findMatch(){
 }
 function tryHost(k, name, my){
   return new Promise(res => {
-    const peer = new Peer(LOBBY + k, { debug:0 });
+    const peer = new Peer(LOBBY + k, PEER_OPTS);
     let done = false;
     peer.on('open', () => {
       if (my !== netSearch){ peer.destroy(); return res('stop'); }
@@ -782,7 +794,7 @@ function tryHost(k, name, my){
 }
 function tryJoin(k, name, my){
   return new Promise(res => {
-    const peer = new Peer({ debug:0 });
+    const peer = new Peer(PEER_OPTS);
     let done = false;
     const fail = () => { if (!done){ done = true; try { peer.destroy(); } catch(e){} res(false); } };
     peer.on('open', () => {
@@ -888,7 +900,7 @@ let menuItems = [], menuSel = 0, menuPage = 'mode';
 function showMenu(page){
   if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock();
   menuPage = page; menuEl.style.display = 'flex'; menuBtns.innerHTML = '';
-  netStop();
+  if (page !== 'browse') netStop();
   const opts = page === 'mode'
     ? [['Vs CPU', () => showMenu('level')], ['2 Players', () => startGame('2p')], ['Online', () => showMenu('online')], ['Controls', () => showMenu('controls')]]
     : page === 'controls'
