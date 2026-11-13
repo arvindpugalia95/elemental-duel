@@ -824,7 +824,7 @@ function moveFighter(f, o, inp, dt, isP1){
   if (inp.shoot && !f.prev.shoot) f.holdT = 0;
   if (inp.shoot) f.holdT += dt;
   if (canShoot && pressed(f, inp, 'shoot') && f.cd === 0 && f.busy === 0){
-    f.root.rotation.y = Math.atan2(aim.x, aim.z);
+    f.root.rotation.y = Math.atan2(aim.x, aim.z); f.aimYaw = f.root.rotation.y; f.aimT = 0.6;   // face where you shoot
     if (!f.onGround){
       // air: three fireballs in a fan, angled down
       for (const a of [-0.22, 0, 0.22]){ const d = aim.clone().applyAxisAngle(UP, a); d.y = -0.28; d.normalize(); shoot(f, o, handPos(f, aim, 0), d, { scale:0.75, dmg:6, kb:4, speed:32 }); }
@@ -850,7 +850,7 @@ function moveFighter(f, o, inp, dt, isP1){
   }
   // holding RT charges a mega blast
   if (inp.shoot && f.holdT > 0.35 && canShoot && f.busy === 0 && f.onGround){
-    f.charging = true;
+    f.charging = true; f.aimYaw = Math.atan2(aim.x, aim.z); f.aimT = 0.6;
     f.charge = Math.min(1, (f.holdT - 0.35) / 1.0);
     const hp = handPos(f, aim, 0), e = ELEM[f.element], a = performance.now()/60;
     for (let k = 0; k < 2; k++){
@@ -866,6 +866,7 @@ function moveFighter(f, o, inp, dt, isP1){
     f.charging = false; f.aura.scale.setScalar(1);
     if (canShoot && f.charge > 0.05){
       const c = f.charge;
+      f.aimYaw = Math.atan2(aim.x, aim.z); f.root.rotation.y = f.aimYaw; f.aimT = 0.7;
       shoot(f, o, handPos(f, aim, 0), aim, { scale:1.6 + c*1.4, dmg:12 + Math.round(c*16), kb:10 + c*6, launch:8 + c*4, heavy:true, aoe:2.5 + c*2, speed:22 });
       play(f, 'Cast', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(1.2);
       f.busy = 0.45; f.cd = 0.9; f.vel.addScaledVector(aim, -6 - c*6);   // recoil
@@ -894,7 +895,8 @@ function moveFighter(f, o, inp, dt, isP1){
   f.root.position.z = Math.max(-LIMIT, Math.min(LIMIT, f.root.position.z));
 
   if (!f.down){
-    const target = Math.atan2(toOpp.x, toOpp.z);
+    f.aimT = Math.max(0, (f.aimT || 0) - dt);
+    const target = f.aimT > 0 ? f.aimYaw : Math.atan2(toOpp.x, toOpp.z);   // keep facing the aim right after shooting
     let d = target - f.root.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));
     f.root.rotation.y += d * (1 - Math.exp(-16*dt));
   }
