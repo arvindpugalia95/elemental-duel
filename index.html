@@ -1330,11 +1330,16 @@ function kiMat(e){
     fragmentShader: NOISE + `uniform float uTime; uniform vec3 c0,c1,c2,c3; varying vec3 vN; varying vec3 vP;
       void main(){
         float fres = 1.0 - abs(vN.z);
-        float n1 = snoise(vP*4.0 + vec3(0.0, uTime*2.5, uTime*3.0));
-        float n2 = snoise(vP*9.0 - vec3(uTime*4.0, 0.0, uTime*2.0));
-        float t = fres*1.05 + n1*0.10 + n2*0.05;
-        vec3 col = t < 0.33 ? c0 : t < 0.52 ? mix(c0, c1, 0.55) : t < 0.72 ? c1 : t < 0.9 ? c2 : c3;   // white core -> colour bands -> deep rim
-        col = mix(col, c0, smoothstep(0.86, 0.97, abs(n2)) * 0.55);   // flowing energy veins
+        float n1 = snoise(vP*3.0 + vec3(0.0, uTime*2.0, uTime*2.5));
+        float n2 = snoise(vP*5.0 - vec3(uTime*3.0, 0.0, uTime*1.5));
+        float t = fres*1.05 + n1*0.05;
+        // clean anti-aliased bands (no jagged pixel noise): white core -> colour bands -> deep rim
+        vec3 col = c0;
+        col = mix(col, mix(c0, c1, 0.55), smoothstep(0.28, 0.34, t));
+        col = mix(col, c1, smoothstep(0.48, 0.54, t));
+        col = mix(col, c2, smoothstep(0.68, 0.74, t));
+        col = mix(col, c3, smoothstep(0.87, 0.94, t));
+        col = mix(col, c0, smoothstep(0.80, 0.95, abs(n2)) * 0.30 * (1.0 - smoothstep(0.7, 0.9, t)));   // soft energy flow
         gl_FragColor = vec4(col, 1.0);
       }`
   });
