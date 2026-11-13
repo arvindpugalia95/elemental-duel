@@ -1166,13 +1166,13 @@ function shoot(owner, target, pos, dir, opt = {}){
   // energy-ball look: white-hot core, coloured energy shell, big glow, halo and a glowing streak
   const add = (geo, color, op) => new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:op, blending:THREE.AdditiveBlending, depthWrite:false }));
   const body = new THREE.Mesh(KI_CORE, new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0, depthWrite:false }));
-  const shell = new THREE.Mesh(KI_SHELL, kiMat(e)), shell2 = add(KI_SHELL2, e.c[2], 0.0);   // crisp anime energy ball
+  const shell = new THREE.Mesh(KI_SHELL, kiMat(e)), shell2 = add(KI_SHELL2, e.c[2], 0.10);   // crisp anime energy ball
   const r1 = new THREE.Mesh(KI_RING, new THREE.MeshBasicMaterial({ color:e.c[1] })), r2 = new THREE.Mesh(KI_RING, new THREE.MeshBasicMaterial({ color:0xffffff }));
-  r2.scale.setScalar(0.85);
+  r2.scale.setScalar(0.85); r1.rotation.x = 1.2; r2.rotation.y = 1.2; shell.add(r1, r2);
   const streak = add(KI_STREAK, e.c[1], 0.28); streak.rotation.x = -Math.PI/2; streak.position.z = -1.6;
   const streak2 = add(KI_STREAK, 0xffffff, 0.22); streak2.rotation.x = -Math.PI/2; streak2.position.z = -1.0; streak2.scale.set(0.45, 0.6, 0.45);
-  body.add(shell, shell2); body.userData.shell = shell; body.userData.shell2 = shell2; body.userData.r1 = r1; body.userData.r2 = r2;
-  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:e.c[2], transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0 }));
+  body.add(shell, shell2, streak, streak2); body.userData.shell = shell; body.userData.shell2 = shell2; body.userData.r1 = r1; body.userData.r2 = r2;
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:e.c[2], transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.35 }));
   glow.scale.setScalar(1.7*sc); body.scale.setScalar(sc);
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:0xffffff, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.0 }));
   halo.scale.setScalar(1.6*sc); glow.add(halo);
@@ -1330,16 +1330,10 @@ function kiMat(e){
     fragmentShader: NOISE + `uniform float uTime; uniform vec3 c0,c1,c2,c3; varying vec3 vN; varying vec3 vP;
       void main(){
         float fres = 1.0 - abs(vN.z);
-        float n1 = snoise(vP*3.0 + vec3(0.0, uTime*2.0, uTime*2.5));
-        float n2 = snoise(vP*5.0 - vec3(uTime*3.0, 0.0, uTime*1.5));
-        float t = fres*1.05 + n1*0.05;
-        // clean anti-aliased bands (no jagged pixel noise): white core -> colour bands -> deep rim
-        vec3 col = c0;
-        col = mix(col, mix(c0, c1, 0.55), smoothstep(0.28, 0.34, t));
-        col = mix(col, c1, smoothstep(0.48, 0.54, t));
-        col = mix(col, c2, smoothstep(0.68, 0.74, t));
-        col = mix(col, c3, smoothstep(0.87, 0.94, t));
-        col = mix(col, c0, smoothstep(0.80, 0.95, abs(n2)) * 0.30 * (1.0 - smoothstep(0.7, 0.9, t)));   // soft energy flow
+        float swirl = snoise(vP*5.0 + vec3(uTime*3.0, uTime*-2.0, uTime*4.0))*0.12;
+        float t = fres + swirl;
+        vec3 col = t < 0.38 ? c0 : t < 0.62 ? c1 : t < 0.84 ? c2 : c1;   // centre white, bands, bright rim
+        if (t > 0.97) col = c0;
         gl_FragColor = vec4(col, 1.0);
       }`
   });
@@ -1369,13 +1363,13 @@ function updateProjectiles(dt){
     p.body.userData.shell.scale.setScalar(pulse);
     if (p.body.userData.shell.material.uniforms) p.body.userData.shell.material.uniforms.uTime.value += dt;
     if (p.body.userData.r1){ p.body.userData.r1.rotation.z += dt*9; p.body.userData.r2.rotation.x += dt*11; } p.body.userData.shell2.scale.setScalar(2.1 - pulse);
-    if (false){   // (sparks around the ball turned off)
+    if (Math.random() < 0.35){   // crackling energy sparks around the ball
       const r = 0.55*p.sc, a1 = Math.random()*6.28, a2 = Math.random()*6.28;
       puff(p.g.position.clone().add(new THREE.Vector3(Math.cos(a1)*Math.sin(a2)*r, Math.cos(a2)*r, Math.sin(a1)*Math.sin(a2)*r)), 0xffffff, 0.16*p.sc, (Math.random()-0.5)*4, (Math.random()-0.5)*4, (Math.random()-0.5)*4, 0.09);
     }
-    p.glow.material.opacity = 0;
+    p.glow.material.opacity = 0.3 + Math.sin(p.age*35)*0.06;
     p.trailT += dt;
-    const trailGap = 1e9;   // no trail   // small stream shots leave a lighter trail (less lag)
+    const trailGap = 0.03 / Math.min(1, p.sc);   // small stream shots leave a lighter trail (less lag)
     while (p.trailT > trailGap){ p.trailT -= trailGap;
       const back = p.vel.clone().normalize().multiplyScalar(-0.5);
       const j = 0.4, at = p.g.position.clone().add(back).add(new THREE.Vector3((Math.random()-0.5)*j, (Math.random()-0.5)*j, (Math.random()-0.5)*j));
