@@ -376,6 +376,8 @@ function masterClips(){
     make('Center_Block', 'Sword_Slash', 0, 0.9, 0.5);
     make('Sprinting_Forward_Roll', 'Roll', null, null, 0.55);
     make('Jump', 'Jump');
+    if (src.Flying) make('Flying', 'Fly');
+    if (src.Hovering) make('Hovering', 'Hover');
     make('Head_Hit', 'HitRecieve', 0, 0.9, 0.45); make('Head_Hit', 'HitRecieve_2', 0, 0.9, 0.45);
     reverse('Getting_Up', 'Death', 0.7);          // knocked down = getting up played backwards
     make('Getting_Up', 'Getup', null, null, 0.9);
@@ -407,7 +409,7 @@ function makeFighter(element, tint, startPos, hpEl, charKey = 'ch24'){
     m.traverse(o => { if (o.isBone){ o.getWorldPosition(v); headY = Math.max(headY, v.y); } });
     const h = headY > 0.01 ? headY * 1.12 : 2.0;
     m.scale.multiplyScalar(TARGET_H / h);
-    f.root.add(m);
+    f.pivot = new THREE.Group(); f.pivot.position.y = 1.0; m.position.y -= 1.0; f.pivot.add(m); f.root.add(f.pivot);
     f.mixer = new THREE.AnimationMixer(m);
     clips.forEach(c => f.actions[c.name] = f.mixer.clipAction(c));
     ['Punch_Left','Punch_Right','Kick_Left','Kick_Right','Roll','HitRecieve','HitRecieve_2','Death','Cast','Interact','Sword_Slash','Jump','Getup'].forEach(n => {
@@ -437,8 +439,8 @@ const keys = {};
 addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'Space') e.preventDefault(); });
 addEventListener('keyup',   e => { keys[e.code] = false; });
 const KB = [
-  { l:'KeyA', r:'KeyD', u:'KeyW', d:'KeyS', jump:'Space', punch:'KeyJ', kick:'KeyK', roll:'KeyL', shoot:'KeyI', deflect:'KeyO', wall:'KeyE' },
-  { l:'ArrowLeft', r:'ArrowRight', u:'ArrowUp', d:'ArrowDown', jump:'Enter', punch:'Numpad1', kick:'Numpad2', roll:'Numpad3', shoot:'Numpad4', deflect:'Numpad5', wall:'Numpad7' }
+  { l:'KeyA', r:'KeyD', u:'KeyW', d:'KeyS', jump:'Space', down:'KeyC', punch:'KeyJ', kick:'KeyK', roll:'KeyL', shoot:'KeyI', deflect:'KeyO', wall:'KeyE' },
+  { l:'ArrowLeft', r:'ArrowRight', u:'ArrowUp', d:'ArrowDown', jump:'Enter', down:'Numpad8', punch:'Numpad1', kick:'Numpad2', roll:'Numpad3', shoot:'Numpad4', deflect:'Numpad5', wall:'Numpad7' }
 ];
 // ---------- CPU opponent: takes over Player 2 when there is no 2nd controller ----------
 let p2KeyTime = -99;
@@ -601,7 +603,7 @@ function sendState(){
   const f = ME, r = f.root;
   send({ t:'s', p:[+r.position.x.toFixed(3), +r.position.y.toFixed(3), +r.position.z.toFixed(3)], r:+r.rotation.y.toFixed(3),
     a:f.cur, n:f.animN || 0, ts:f.cur && f.actions[f.cur] ? +f.actions[f.cur].getEffectiveTimeScale().toFixed(2) : 1,
-    hp:f.hp, i:f.iframes > 0 ? 1 : 0, d:+f.deflectT.toFixed(3), dn:f.down ? 1 : 0, ch:f.charging ? +f.charge.toFixed(2) : -1 });
+    hp:f.hp, i:f.iframes > 0 ? 1 : 0, d:+f.deflectT.toFixed(3), dn:f.down ? 1 : 0, ch:f.charging ? +f.charge.toFixed(2) : -1, tl:f.pivot ? +f.pivot.rotation.x.toFixed(2) : 0 });
 }
 function updatePuppet(f, dt){
   const m = f.net; if (!f.ready){ return; }
@@ -614,6 +616,7 @@ function updatePuppet(f, dt){
     if (m.hp !== f.hp){ f.hp = m.hp; f.hpEl.style.width = f.hp + '%'; }
     f.iframes = m.i ? 1 : 0; f.deflectT = m.d; f.down = !!m.dn;
     f.charging = m.ch >= 0; f.charge = Math.max(0, m.ch);
+    if (f.pivot) f.pivot.rotation.x = m.tl || 0;
   }
   f.shield.visible = f.deflectT > 0;
   if (f.shield.visible){ const kk = Math.min(1, f.deflectT / 0.28); f.shield.material.opacity = 0.35*kk; f.shield.rim.material.opacity = 0.9*kk; }
@@ -650,6 +653,8 @@ function showMenu(page){
       ['Zoom camera', 'D-pad up / down', 'Mouse wheel', '—'],
       ['Reset camera', 'Click right stick', '—', '—'],
       ['Jump', 'A', 'Space', 'Enter'],
+      ['Fly (press jump again in the air)', 'A, A · hold A = up', 'Space, Space · hold = up', 'Enter, Enter'],
+      ['Fly down', 'Click left stick', 'C', 'Num 8'],
       ['Punch (×3 combo)', 'X', 'J', 'Num 1'],
       ['Heavy kick', 'Y', 'K', 'Num 2'],
       ['Roll / dodge', 'B or RB', 'L', 'Num 3'],
@@ -730,10 +735,11 @@ function readInput(idx){
   const pad = [...navigator.getGamepads()].filter(Boolean)[idx], k = KB[idx];
   if (idx === 1 && gameMode === 'cpu') return aiInput();
   let x = 0, y = 0;
-  const b = { jump:!!keys[k.jump], roll:!!keys[k.roll], punch:!!keys[k.punch], kick:!!keys[k.kick], shoot:!!keys[k.shoot], deflect:!!keys[k.deflect], wall:!!keys[k.wall] };
+  const b = { down:!!keys[k.down], jump:!!keys[k.jump], roll:!!keys[k.roll], punch:!!keys[k.punch], kick:!!keys[k.kick], shoot:!!keys[k.shoot], deflect:!!keys[k.deflect], wall:!!keys[k.wall] };
   if (pad){
     x = pad.axes[0]||0; y = pad.axes[1]||0;
     b.jump  ||= pad.buttons[0]?.pressed;   // A
+    b.down  ||= pad.buttons[10]?.pressed;  // click left stick = fly down
     b.roll  ||= pad.buttons[1]?.pressed || pad.buttons[5]?.pressed;   // B or RB
     b.punch ||= pad.buttons[2]?.pressed;   // X
     b.kick  ||= pad.buttons[3]?.pressed;   // Y
@@ -803,7 +809,7 @@ function moveFighter(f, o, inp, dt, isP1){
   }
   // ---- melee: X = 3-hit combo, Y = heavy kick, air X = dive kick, running X = dash punch ----
   else if (free && pressed(f, inp, 'punch')){
-    if (!f.onGround){
+    if (!f.onGround && !f.flying){
       f.vy = -16; f.vel.copy(toOpp).multiplyScalar(13);
       startMelee(f, 'Kick_Right', 1.6, 0.45, { dmg:9, range:2.6, at:0.12, kb:8, heavy:true, name:'dive' }, 0);
     } else if (speed > 6.5 && f.comboT <= 0){
@@ -824,8 +830,8 @@ function moveFighter(f, o, inp, dt, isP1){
   if (inp.shoot && !f.prev.shoot) f.holdT = 0;
   if (inp.shoot) f.holdT += dt;
   if (canShoot && pressed(f, inp, 'shoot') && f.cd === 0 && f.busy === 0){
-    f.root.rotation.y = Math.atan2(aim.x, aim.z);
-    if (!f.onGround){
+    f.root.rotation.y = Math.atan2(aim.x, aim.z); f.aimYaw = f.root.rotation.y; f.aimT = 0.6;   // face where you shoot
+    if (!f.onGround && !f.flying){
       // air: three fireballs in a fan, angled down
       for (const a of [-0.22, 0, 0.22]){ const d = aim.clone().applyAxisAngle(UP, a); d.y = -0.28; d.normalize(); shoot(f, o, handPos(f, aim, 0), d, { scale:0.75, dmg:6, kb:4, speed:32 }); }
       play(f, 'Cast', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(2.2); f.cd = 0.6; f.busy = 0.2;
@@ -849,8 +855,8 @@ function moveFighter(f, o, inp, dt, isP1){
     }
   }
   // holding RT charges a mega blast
-  if (inp.shoot && f.holdT > 0.35 && canShoot && f.busy === 0 && f.onGround){
-    f.charging = true;
+  if (inp.shoot && f.holdT > 0.35 && canShoot && f.busy === 0 && (f.onGround || f.flying)){
+    f.charging = true; f.aimYaw = Math.atan2(aim.x, aim.z); f.aimT = 0.6;
     f.charge = Math.min(1, (f.holdT - 0.35) / 1.0);
     const hp = handPos(f, aim, 0), e = ELEM[f.element], a = performance.now()/60;
     for (let k = 0; k < 2; k++){
@@ -866,6 +872,7 @@ function moveFighter(f, o, inp, dt, isP1){
     f.charging = false; f.aura.scale.setScalar(1);
     if (canShoot && f.charge > 0.05){
       const c = f.charge;
+      f.aimYaw = Math.atan2(aim.x, aim.z); f.root.rotation.y = f.aimYaw; f.aimT = 0.7;
       shoot(f, o, handPos(f, aim, 0), aim, { scale:1.6 + c*1.4, dmg:12 + Math.round(c*16), kb:10 + c*6, launch:8 + c*4, heavy:true, aoe:2.5 + c*2, speed:22 });
       play(f, 'Cast', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(1.2);
       f.busy = 0.45; f.cd = 0.9; f.vel.addScaledVector(aim, -6 - c*6);   // recoil
@@ -875,17 +882,24 @@ function moveFighter(f, o, inp, dt, isP1){
   }
 
   if (free && f.onGround && pressed(f, inp, 'jump')){ f.vy = JUMP; f.onGround = false; sfx.jump(); }
+  else if (!f.onGround && !f.flying && f.hp > 0 && f.stun === 0 && pressed(f, inp, 'jump')){ f.flying = true; f.vy = 2; sfx.whoosh(); }   // double jump = fly
 
   // ---- velocity ----
   const slow = f.charging ? 0.35 : 1;
   if (f.cur === 'Roll' && f.busy > 0) want.copy(f.rollDir).multiplyScalar(14);
   else if (f.attack && f.attack.name === 'dive' && !f.onGround) want.copy(f.vel);
   else if (f.busy > 0 || f.stun > 0 || f.hp <= 0) want.set(0,0,0);
-  else want.copy(fwd).multiplyScalar(-inp.y).addScaledVector(right, inp.x).multiplyScalar(RUN*slow);
+  else want.copy(fwd).multiplyScalar(-inp.y).addScaledVector(right, inp.x).multiplyScalar(RUN*slow*(f.flying ? 1.6 : 1));
   f.vel.lerp(want, 1 - Math.exp(-(f.stun > 0 ? 3 : f.busy > 0 && f.cur !== 'Roll' ? 6 : ACCEL)*dt));
   f.root.position.addScaledVector(f.vel, dt);
-  f.vy -= GRAV*dt; f.root.position.y += f.vy*dt;
+  if (f.flying){   // hover: hold jump to rise, C / click left stick to go down, otherwise stay in the air
+    const vt = (inp.jump ? 9 : 0) + (inp.down ? -10 : 0);
+    f.vy += (vt - f.vy)*(1 - Math.exp(-6*dt));
+    if (f.root.position.y > 14 && f.vy > 0) f.vy = 0;
+    f.root.position.y += f.vy*dt + Math.sin(performance.now()/300)*0.002;
+  } else { f.vy -= GRAV*dt; f.root.position.y += f.vy*dt; }
   if (f.root.position.y <= 0){
+    f.flying = false;
     if (!f.onGround && f.attack && f.attack.name === 'dive'){ explodeDust(f.root.position, f.element); f.busy = 0.2; }
     if (!f.onGround && f.down) shake = Math.max(shake, 0.08);
     f.root.position.y = 0; f.vy = 0; f.onGround = true;
@@ -894,7 +908,10 @@ function moveFighter(f, o, inp, dt, isP1){
   f.root.position.z = Math.max(-LIMIT, Math.min(LIMIT, f.root.position.z));
 
   if (!f.down){
-    const target = Math.atan2(toOpp.x, toOpp.z);
+    f.aimT = Math.max(0, (f.aimT || 0) - dt);
+    const flySp = Math.hypot(f.vel.x, f.vel.z);
+    const target = f.aimT > 0 ? f.aimYaw : (f.flying && flySp > 4 ? Math.atan2(f.vel.x, f.vel.z) : Math.atan2(toOpp.x, toOpp.z));
+    if (f.pivot){ const tilt = f.flying && f.aimT <= 0 && !f.actions.Fly ? Math.min(1.25, flySp / 12) : 0; f.pivot.rotation.x += (tilt - f.pivot.rotation.x)*(1 - Math.exp(-6*dt)); }   // keep facing the aim right after shooting
     let d = target - f.root.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));
     f.root.rotation.y += d * (1 - Math.exp(-16*dt));
   }
@@ -912,6 +929,7 @@ function moveFighter(f, o, inp, dt, isP1){
   if (f.busy === 0 && f.stun === 0 && f.hp > 0 && !f.down){
     const sp = Math.hypot(f.vel.x, f.vel.z);
     if (f.charging) play(f, 'Idle_Sword' in f.actions ? 'Idle_Sword' : 'Idle');
+    else if (f.flying){ const fs = Math.hypot(f.vel.x, f.vel.z); play(f, fs > 4 && f.actions.Fly ? 'Fly' : f.actions.Hover ? 'Hover' : 'Idle'); }
     else if (!f.onGround) play(f, f.actions.Jump ? 'Jump' : 'Idle');
     else if (sp < 1) play(f, 'Idle_Sword' in f.actions ? 'Idle_Sword' : 'Idle');
     else {
@@ -942,6 +960,7 @@ function hit(o, atk, dir){
   o.hpEl.style.width = o.hp + '%';
   o.vel.copy(dir).setY(0).normalize().multiplyScalar(atk.kb);
   if (atk.launch){ o.vy = atk.launch; o.onGround = false; }
+  if (atk.heavy) o.flying = false;
   o.busy = 0; o.attack = null; o.charging = false; o.charge = 0; o.aura.scale.setScalar(1);
   hitstop = atk.heavy ? 0.11 : 0.055;
   o.flash = 0.09; o.mats.forEach(m => m.emissive && m.emissive.setHex(0xffffff));
@@ -1090,9 +1109,17 @@ function shoot(owner, target, pos, dir, opt = {}){
   if (auth && gameMode === 'online') send({ t:'shoot', sid, pos:[pos.x, pos.y, pos.z], dir:[dir.x, dir.y, dir.z],
     opt:{ scale:opt.scale, dmg:opt.dmg, kb:opt.kb, launch:opt.launch, heavy:opt.heavy, aoe:opt.aoe, speed:opt.speed } });
   const e = ELEM[owner.element], isIce = owner.element === 'ice', g = new THREE.Group();
-  const body = new THREE.Mesh(isIce ? ICE_GEO : FIRE_GEO, fireMat(e));
+  // energy-ball look: white-hot core, coloured energy shell, big glow, halo and a glowing streak
+  const add = (geo, color, op) => new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:op, blending:THREE.AdditiveBlending, depthWrite:false }));
+  const body = new THREE.Mesh(KI_CORE, new THREE.MeshBasicMaterial({ color:0xffffff }));
+  const shell = add(KI_SHELL, e.c[2], 0.75), shell2 = add(KI_SHELL2, e.c[3], 0.35);
+  const streak = add(KI_STREAK, e.c[1], 0.55); streak.rotation.x = -Math.PI/2; streak.position.z = -1.6;
+  const streak2 = add(KI_STREAK, 0xffffff, 0.5); streak2.rotation.x = -Math.PI/2; streak2.position.z = -1.0; streak2.scale.set(0.45, 0.6, 0.45);
+  body.add(shell, shell2, streak, streak2); body.userData.shell = shell; body.userData.shell2 = shell2;
   const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:e.c[2], transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.85 }));
-  glow.scale.setScalar(3.2*sc); body.scale.setScalar(sc);
+  glow.scale.setScalar(4.2*sc); body.scale.setScalar(sc);
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map:GLOW, color:0xffffff, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.9 }));
+  halo.scale.setScalar(1.6*sc); glow.add(halo);
   g.add(glow, body);
   g.position.copy(pos); g.lookAt(pos.clone().add(dir)); scene.add(g);
   shots.push({ g, body, glow, owner, target, vel:dir.clone().multiplyScalar(opt.speed || 30), life:1.8, e, trailT:0, age:0, sc,
@@ -1238,6 +1265,8 @@ function clash(a, b){
   hitstop = 0.07; shake = Math.max(shake, 0.2);
   dmgText(pos.clone().setY(pos.y - 2.4), 'CLASH!', '#ffffff');
 }
+const KI_CORE = new THREE.SphereGeometry(0.3, 24, 16), KI_SHELL = new THREE.SphereGeometry(0.46, 24, 16), KI_SHELL2 = new THREE.SphereGeometry(0.62, 24, 16);
+const KI_STREAK = new THREE.ConeGeometry(0.42, 3.2, 20, 1, true);
 function killShot(p){ scene.remove(p.g); p.body.material.dispose(); p.glow.material.dispose(); }
 function updateProjectiles(dt){
   // shots from different fighters that meet cancel each other out
@@ -1257,11 +1286,15 @@ function updateProjectiles(dt){
   for (let i = shots.length - 1; i >= 0; i--){
     const p = shots[i]; p.life -= dt; p.age += dt;
     p.g.position.addScaledVector(p.vel, dt);
-    p.body.material.uniforms.uTime.value += dt;
-    p.body.rotation.z += dt * 6;
+    const pulse = 1 + Math.sin(p.age*45)*0.09;
+    p.body.userData.shell.scale.setScalar(pulse); p.body.userData.shell2.scale.setScalar(2.1 - pulse);
+    if (Math.random() < 0.35){   // crackling energy sparks around the ball
+      const r = 0.55*p.sc, a1 = Math.random()*6.28, a2 = Math.random()*6.28;
+      puff(p.g.position.clone().add(new THREE.Vector3(Math.cos(a1)*Math.sin(a2)*r, Math.cos(a2)*r, Math.sin(a1)*Math.sin(a2)*r)), 0xffffff, 0.16*p.sc, (Math.random()-0.5)*4, (Math.random()-0.5)*4, (Math.random()-0.5)*4, 0.09);
+    }
     p.glow.material.opacity = 0.7 + Math.sin(p.age*35)*0.15;
     p.trailT += dt;
-    const trailGap = 0.012 / Math.min(1, p.sc);   // small stream shots leave a lighter trail (less lag)
+    const trailGap = 0.03 / Math.min(1, p.sc);   // small stream shots leave a lighter trail (less lag)
     while (p.trailT > trailGap){ p.trailT -= trailGap;
       const back = p.vel.clone().normalize().multiplyScalar(-0.5);
       const j = 0.4, at = p.g.position.clone().add(back).add(new THREE.Vector3((Math.random()-0.5)*j, (Math.random()-0.5)*j, (Math.random()-0.5)*j));
