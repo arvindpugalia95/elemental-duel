@@ -69,6 +69,7 @@
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/meshopt_decoder.js"></script>
+<script src="assets.js"></script>
 <script>
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 400);
@@ -330,62 +331,90 @@ function toonify(root){
 }
 toonify(scene);
 
-// ---------- Fighters: CC0 rigged fighter (Quaternius) with combat animations ----------
-// model is loaded from the same folder
-const glbBufP = fetch('adventurer.glb').then(r => r.arrayBuffer());
+// ---------- Fighters: realistic Mixamo character + shared master animations ----------
+// Every character uses the same Mixamo skeleton, so the master animation set works for all of them.
+const A = window.ED_ASSETS;
+const b64buf = s => Uint8Array.from(atob(s), c => c.charCodeAt(0)).buffer;
 const loader = new THREE.GLTFLoader();
-if (window.MeshoptDecoder) loader.setMeshoptDecoder(MeshoptDecoder);
-const TARGET_H = 3.2;
-const PALETTES = {
-  fire: { Green:0xc8321f, LightGreen:0xf6a623, Brown:0x2a2a33, Brown2:0x6b3f22, Grey:0x2a2a33, Hair:0x1c1714, Gold:0xf6c744, Black:0x1a1a1a },
-  ice:  { Green:0x2f7fd8, LightGreen:0xe8f6ff, Brown:0x1f2b3d, Brown2:0x9fd2f5, Grey:0x1f2b3d, Hair:0xf2f6fa, Gold:0x9fe2ff, Black:0x1a1a1a }
-};
-function makeFighter(element, tint, startPos, hpEl){
+const TARGET_H = 3.3;
+function parseGLB(b64){
+  return new Promise((res, rej) => {
+    const cib = window.createImageBitmap; window.createImageBitmap = undefined;   // use <img> + data: URIs for textures
+    try { loader.parse(b64buf(b64), '', res, rej); } finally { window.createImageBitmap = cib; }
+  });
+}
+// --- master animation library: game move name -> clip (trimmed, in place, timed for combat) ---
+let masterClipsP = null;
+function masterClips(){
+  if (masterClipsP) return masterClipsP;
+  masterClipsP = Promise.all(Object.entries(A.anims).map(([n, b]) => parseGLB(b).then(g => [n, g.animations[0]]))).then(list => {
+    const src = Object.fromEntries(list), out = [];
+    const timeScale = (c, len) => { if (!len) return c; const k = len / c.duration; c.tracks.forEach(t => { for (let i = 0; i < t.times.length; i++) t.times[i] *= k; }); c.duration = len; return c; };
+    const inPlace = c => { c.tracks.forEach(t => { if (/Hips\.position$/.test(t.name)) for (let i = 0; i < t.values.length; i += 3){ t.values[i] = t.values[0]; t.values[i+2] = t.values[2]; } }); return c; };
+    const make = (from, name, t0, t1, len) => {
+      let c = src[from].clone();
+      if (t0 != null) c = THREE.AnimationUtils.subclip(c, name, Math.round(t0*30), Math.round(t1*30), 30);
+      c.name = name; out.push(timeScale(inPlace(c), len));
+    };
+    const reverse = (from, name, len) => {
+      const c = src[from].clone(), D = c.duration; c.name = name;
+      c.tracks = c.tracks.map(t => {
+        const n = t.times.length, sz = t.getValueSize(), times = new Float32Array(n), vals = new Float32Array(t.values.length);
+        for (let i = 0; i < n; i++){ times[i] = D - t.times[n-1-i]; for (let k = 0; k < sz; k++) vals[i*sz+k] = t.values[(n-1-i)*sz+k]; }
+        return new t.constructor(t.name, times, vals);
+      });
+      out.push(timeScale(inPlace(c), len));
+    };
+    make('Fighting_Idle', 'Idle');
+    make('Running', 'Run'); make('Running_Backward', 'Run_Back'); make('Left_Strafe', 'Run_Left'); make('Right_Strafe', 'Run_Right');
+    make('Punching_Bag', 'Punch_Left', 0, 0.8, 0.5); make('Punching_Bag', 'Punch_Right', 0.8, 1.6, 0.5);
+    make('Roundhouse_Kick', 'Kick_Left', 0.2, 1.6, 0.8); make('Roundhouse_Kick', 'Kick_Right', 0.2, 1.6, 0.8);
+    make('Standing_2H_Magic_Attack_01', 'Cast', 0.3, 1.7, 0.7); make('Standing_2H_Magic_Attack_01', 'Interact', 0.3, 1.7, 0.7);
+    make('Center_Block', 'Sword_Slash', 0, 0.9, 0.5);
+    make('Sprinting_Forward_Roll', 'Roll', null, null, 0.55);
+    make('Jump', 'Jump');
+    make('Head_Hit', 'HitRecieve', 0, 0.9, 0.45); make('Head_Hit', 'HitRecieve_2', 0, 0.9, 0.45);
+    reverse('Getting_Up', 'Death', 0.7);          // knocked down = getting up played backwards
+    make('Getting_Up', 'Getup', null, null, 0.9);
+    return out;
+  });
+  return masterClipsP;
+}
+const ELEMENT_TINT = { fire:0xffd6cc, ice:0xd2e6ff };
+function makeFighter(element, tint, startPos, hpEl, charKey = 'ch24'){
   const f = { root:new THREE.Group(), vel:new THREE.Vector3(), vy:0, onGround:true, mixer:null, actions:{}, cur:null, ready:false,
               element, cd:0, busy:0, hitDone:true, mats:[], flash:0, deflectT:0, dcd:0, wcd:0, comboT:0, chainT:0, chain:0, sinceRoll:9, holdT:0, charge:0, charging:false, down:false, hitSide:false, hp:100, hpEl, prev:{}, combo:0, stun:0, iframes:0, rollDir:new THREE.Vector3() };
   f.root.position.copy(startPos); scene.add(f.root);
   f.aura = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.15, 48), new THREE.MeshBasicMaterial({ color:tint, transparent:true, opacity:0.55, side:THREE.DoubleSide }));
   f.aura.rotation.x = -Math.PI/2; f.aura.position.y = 0.03; f.root.add(f.aura);
-  // deflect shield: a flash of element-coloured energy in front of the fighter
   f.shield = new THREE.Mesh(new THREE.CircleGeometry(1.5, 40), new THREE.MeshBasicMaterial({ color:tint, transparent:true, opacity:0, side:THREE.DoubleSide, depthWrite:false }));
   const rim = new THREE.Mesh(new THREE.RingGeometry(1.38, 1.55, 40), new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0, side:THREE.DoubleSide, depthWrite:false }));
   f.shield.add(rim); f.shield.rim = rim;
   f.shield.position.set(0, 1.9, 1.0); f.shield.visible = false; f.root.add(f.shield);
-  glbBufP.then(glbBuf => loader.parse(glbBuf.slice(0), '', gltf => {
-    const m = gltf.scene, pal = PALETTES[element];
-    const skinned = [];
+  Promise.all([parseGLB(A.characters[charKey]), masterClips()]).then(([gltf, clips]) => {
+    const m = gltf.scene;
     m.traverse(o => {
-      if (o.name === 'Backpack') o.visible = false;
       if (!o.isMesh) return;
-      o.castShadow = true; o.receiveShadow = false; o.frustumCulled = false;   // no self-shadow = no jagged shadow pixels on clothes
-      const conv = mt => { const c = toToon(mt, o.isSkinnedMesh); if (pal[mt.name] !== undefined) c.color.setHex(pal[mt.name]); f.mats.push(c); return c; };
+      o.castShadow = true; o.receiveShadow = false; o.frustumCulled = false;
+      const conv = mt => { const c = mt.clone(); c.color.multiply(new THREE.Color(ELEMENT_TINT[element])); c.emissive = new THREE.Color(0); f.mats.push(c); return c; };
       o.material = Array.isArray(o.material) ? o.material.map(conv) : conv(o.material);
-      if (o.isSkinnedMesh && o.visible && o.parent.visible) skinned.push(o);
     });
-    // crisp anime ink outline that follows the skeleton
-    skinned.forEach(o => {
-      const ink = new THREE.SkinnedMesh(o.geometry, inkMat(0.0035, true));
-      ink.position.copy(o.position); ink.quaternion.copy(o.quaternion); ink.scale.copy(o.scale);
-      ink.bind(o.skeleton, o.bindMatrix); ink.frustumCulled = false; ink.castShadow = false; o.parent.add(ink);
-    });
-
-    // measure height from the skeleton (skinned-mesh bounds are unreliable)
     m.updateMatrixWorld(true);
     let headY = 0; const v = new THREE.Vector3();
     m.traverse(o => { if (o.isBone){ o.getWorldPosition(v); headY = Math.max(headY, v.y); } });
-    const h = headY > 0.01 ? headY * 1.3 : 2.0;
-    m.scale.setScalar(TARGET_H / h);
+    const h = headY > 0.01 ? headY * 1.12 : 2.0;
+    m.scale.multiplyScalar(TARGET_H / h);
     f.root.add(m);
     f.mixer = new THREE.AnimationMixer(m);
-    gltf.animations.forEach(c => f.actions[c.name.split('|').pop()] = f.mixer.clipAction(c));
-    ['Punch_Left','Punch_Right','Kick_Left','Kick_Right','Roll','HitRecieve','HitRecieve_2','Death'].forEach(n => {
+    clips.forEach(c => f.actions[c.name] = f.mixer.clipAction(c));
+    ['Punch_Left','Punch_Right','Kick_Left','Kick_Right','Roll','HitRecieve','HitRecieve_2','Death','Cast','Interact','Sword_Slash','Jump','Getup'].forEach(n => {
       const a = f.actions[n]; if (a){ a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
     });
     play(f, 'Idle', 0); f.ready = true;
-  }, err => {
+  }).catch(err => {
     document.getElementById('pads').textContent = 'Character failed to load: ' + (err && err.message || err);
     console.error(err);
-  }));
+  });
   return f;
 }
 function play(f, name, fade=0.15, restart=false){
@@ -752,7 +781,8 @@ function moveFighter(f, o, inp, dt, isP1){
   f.shield.visible = f.deflectT > 0;
   if (f.shield.visible){ const k = f.deflectT / 0.28; f.shield.material.opacity = 0.35*k; f.shield.rim.material.opacity = 0.9*k; f.shield.scale.setScalar(1.15 - k*0.25); }
   if (f.flash > 0){ f.flash -= dt; if (f.flash <= 0) f.mats.forEach(m => m.emissive && m.emissive.setHex(0x000000)); }
-  if (f.down && f.stun < 0.35 && f.hp > 0){ f.down = false; play(f, 'Idle', 0.35, true); }   // get back up
+  if (f.down && f.stun < 0.8 && f.stun > 0 && f.hp > 0 && f.cur !== 'Getup') play(f, f.actions.Getup ? 'Getup' : 'Idle', 0.15, true);   // get back up
+  if (f.down && f.stun === 0 && f.hp > 0) f.down = false;
   const free = f.busy === 0 && f.stun === 0 && f.hp > 0;
   const speed = Math.hypot(f.vel.x, f.vel.z);
 
@@ -795,22 +825,22 @@ function moveFighter(f, o, inp, dt, isP1){
     if (!f.onGround){
       // air: three fireballs in a fan, angled down
       for (const a of [-0.22, 0, 0.22]){ const d = aim.clone().applyAxisAngle(UP, a); d.y = -0.28; d.normalize(); shoot(f, o, handPos(f, aim, 0), d, { scale:0.75, dmg:6, kb:4, speed:32 }); }
-      play(f, 'Punch_Right', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(2.2); f.cd = 0.6; f.busy = 0.2;
+      play(f, 'Cast', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(2.2); f.cd = 0.6; f.busy = 0.2;
     } else if (f.sinceRoll < 0.35){
       // fire wave out of a roll: five small shots fanned wide
       for (let k = -2; k <= 2; k++) shoot(f, o, handPos(f, aim, 0), aim.clone().applyAxisAngle(UP, k*0.2), { scale:0.6, dmg:5, kb:3, speed:26 });
-      play(f, 'Punch_Left', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(2.2); f.cd = 0.8; f.busy = 0.25;
+      play(f, 'Cast', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(2.2); f.cd = 0.8; f.busy = 0.25;
     } else {
       f.chain = f.chainT > 0 ? f.chain + 1 : 0; f.chainT = 0.7;
       if (f.chain < 2){
         const side = f.chain === 0 ? 1 : -1;
         shoot(f, o, handPos(f, aim, side), aim, { scale:0.85, dmg:7, kb:4, speed:32 });
-        play(f, side > 0 ? 'Punch_Right' : 'Punch_Left', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(2.4);
+        play(f, 'Cast', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(2.4);
         f.cd = 0.16; f.busy = 0.16;
       } else {
         // third tap: big finisher that knocks down
         shoot(f, o, handPos(f, aim, 0), aim, { scale:1.5, dmg:14, kb:9, launch:7, heavy:true, speed:28 });
-        play(f, 'Kick_Right', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(1.9);
+        play(f, 'Cast', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(1.4);
         f.cd = 0.85; f.busy = 0.35; f.chainT = 0; shake = Math.max(shake, 0.12);
       }
     }
@@ -834,7 +864,7 @@ function moveFighter(f, o, inp, dt, isP1){
     if (canShoot && f.charge > 0.05){
       const c = f.charge;
       shoot(f, o, handPos(f, aim, 0), aim, { scale:1.6 + c*1.4, dmg:12 + Math.round(c*16), kb:10 + c*6, launch:8 + c*4, heavy:true, aoe:2.5 + c*2, speed:22 });
-      play(f, 'Kick_Right', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(1.7);
+      play(f, 'Cast', 0.04, true); f.actions[f.cur].setEffectiveTimeScale(1.2);
       f.busy = 0.45; f.cd = 0.9; f.vel.addScaledVector(aim, -6 - c*6);   // recoil
       shake = 0.2 + c*0.2;
     }
@@ -879,7 +909,7 @@ function moveFighter(f, o, inp, dt, isP1){
   if (f.busy === 0 && f.stun === 0 && f.hp > 0 && !f.down){
     const sp = Math.hypot(f.vel.x, f.vel.z);
     if (f.charging) play(f, 'Idle_Sword' in f.actions ? 'Idle_Sword' : 'Idle');
-    else if (!f.onGround) play(f, 'Idle');
+    else if (!f.onGround) play(f, f.actions.Jump ? 'Jump' : 'Idle');
     else if (sp < 1) play(f, 'Idle_Sword' in f.actions ? 'Idle_Sword' : 'Idle');
     else {
       const fx = f.vel.x/sp, fz = f.vel.z/sp, fwdDot = fx*toOpp.x + fz*toOpp.z, side = fx*toOpp.z - fz*toOpp.x;
@@ -915,8 +945,8 @@ function hit(o, atk, dir){
   dmgText(o.root.position, atk.dmg, atk.heavy ? '#ffcf3a' : '#ffffff');
   if (o.hp <= 0){ play(o, 'Death', 0.08, true); o.stun = 99; o.down = true; }
   else if (atk.heavy){
-    play(o, 'Death', 0.05, true); o.actions[o.cur].setEffectiveTimeScale(2.2);   // knocked off feet
-    o.stun = 1.05; o.iframes = 1.15; o.down = true;
+    play(o, 'Death', 0.05, true); o.actions[o.cur].setEffectiveTimeScale(1.2);   // knocked off feet
+    o.stun = 1.5; o.iframes = 1.6; o.down = true;
   } else {
     o.hitSide = !o.hitSide;
     play(o, o.hitSide ? 'HitRecieve' : 'HitRecieve_2', 0.04, true); o.actions[o.cur].setEffectiveTimeScale(1.7);
