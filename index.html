@@ -19,12 +19,13 @@
   #round small { display:block; font-size:9px; letter-spacing:.5px; margin-top:3px; opacity:.85; }
   .bar { position:absolute; top:calc(env(safe-area-inset-top,0px) + 16px); width:min(32vw,360px); }
   .bar.l { left:16px; } .bar.r { right:16px; text-align:right; }
-  .bar b { color:#fff; font-size:14px; text-shadow:0 1px 3px #000; }
-  .hp { height:10px; background:rgba(0,0,0,.5); border-radius:3px; margin-top:4px; overflow:hidden; }
+  .bar b { color:#fff; font-size:16px; font-weight:800; text-shadow:0 1px 3px #000; }
+  .hp { height:16px; background:rgba(0,0,0,.6); border:2px solid rgba(255,255,255,.85); border-radius:5px; margin-top:5px; overflow:hidden; }
   .hp i { display:block; height:100%; width:100%; }
   .l .hp i { background:#e8552e; } .r .hp i { background:#3a9be0; margin-left:auto; }
-  .mp { height:5px; width:72%; background:rgba(0,0,0,.5); border-radius:3px; margin-top:3px; overflow:hidden; } .r .mp { margin-left:auto; }
-  .mp i { display:block; height:100%; width:100%; background:linear-gradient(90deg,#6fd3ff,#e9fbff); transition:width .1s; } .r .mp i { margin-left:auto; }
+  .mp { height:10px; width:75%; background:rgba(0,0,0,.6); border:2px solid rgba(255,255,255,.75); border-radius:4px; margin-top:4px; overflow:hidden; } .r .mp { margin-left:auto; }
+  .mp i { display:block; height:100%; width:100%; background:linear-gradient(90deg,#2f8cff,#7ae0ff); transition:width .1s; }
+  .bar .lbl { font:700 10px system-ui, sans-serif; color:#fff; text-shadow:0 1px 2px #000; letter-spacing:1px; margin-top:2px; } .r .mp i { margin-left:auto; }
   .tip { position:absolute; bottom:calc(env(safe-area-inset-bottom,0px) + 14px); font-size:12px; color:#fff;
     background:rgba(0,0,0,.55); padding:6px 12px; border-radius:14px; white-space:nowrap; }
   #pads { left:16px; } #help { right:16px; }
@@ -56,9 +57,9 @@
 </head>
 <body>
 <div id="hud">
-  <div class="bar l"><b>Kaen</b><div class="hp"><i></i></div><div class="mp"><i></i></div></div>
+  <div class="bar l"><b>Kaen</b><div class="hp"><i></i></div><div class="mp"><i></i></div><div class="lbl">HEALTH · ENERGY</div></div>
   <div id="round"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="sep"></span><span class="dot"></span><span class="dot"></span></div><small id="score">Kaen 0 – 0 Hyoga</small></div>
-  <div class="bar r"><b>Hyoga</b><div class="hp"><i></i></div><div class="mp"><i></i></div></div>
+  <div class="bar r"><b>Hyoga</b><div class="hp"><i></i></div><div class="mp"><i></i></div><div class="lbl">HEALTH · ENERGY</div></div>
   <div id="pads" class="tip">No controller found – press any button on your controller</div>
   <div id="help" class="tip">X×3 combo · Y heavy kick · RT tap×3 fire combo · hold RT charge · LT wall · LB deflect · B roll · A jump</div>
 </div>
