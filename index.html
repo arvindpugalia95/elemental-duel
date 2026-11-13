@@ -599,6 +599,59 @@ function findFFA(){
     if (my === netSearch) netStatus('Could not reach the match server. Check your internet and try again.');
   })();
 }
+// ---------- game list: create a game, others see it and join ----------
+let BROWSE = [];
+function myName(){
+  const inp = document.getElementById('nameIn');
+  let n = inp && inp.value.trim();
+  if (n){ try { localStorage.setItem('ed-name', n); } catch(e){} }
+  else { try { n = localStorage.getItem('ed-name'); } catch(e){} }
+  return n || 'Player' + Math.floor(100 + Math.random()*900);
+}
+function createFFA(){
+  if (typeof Peer === 'undefined'){ netStatus('Online play needs the hosted version of the game.'); return; }
+  const name = myName(); sfx.unlock(); netStop();
+  const my = netSearch;
+  netStatus('Creating your game…');
+  (async () => {
+    for (let k = 0; k < 8; k++){
+      if (my !== netSearch) return;
+      const r = await tryHostFFA(k, name, my);
+      if (r === 'host') return;
+    }
+    if (my === netSearch) netStatus('Could not create a game right now. Check your internet and try again.');
+  })();
+}
+function browseFFA(){
+  if (typeof Peer === 'undefined'){ netStatus('Online play needs the hosted version of the game.'); return; }
+  myName(); sfx.unlock();
+  BROWSE = []; showMenu('browse');   // (showMenu also stops any old search)
+  const my = netSearch, found = [];
+  netStatus('Looking for games…');
+  const peer = new Peer({ debug:0 });
+  peer.on('error', () => {});
+  peer.on('open', () => {
+    for (let k = 0; k < 8; k++){
+      const conn = peer.connect(FFA_LOBBY + k, { serialization:'json', reliable:true });
+      conn.on('open', () => conn.send({ t:'info' }));
+      conn.on('data', m => { if (m.t === 'info' && !m.started && m.n < 4) found.push({ k, host:m.host, n:m.n }); conn.close(); });
+    }
+  });
+  setTimeout(() => {
+    try { peer.destroy(); } catch(e){}
+    if (my !== netSearch) return;
+    BROWSE = found.sort((a, b) => a.k - b.k);
+    showMenu('browse');
+    netSearch = my;   // showMenu bumps the search id; keep this list usable
+    netStatus(BROWSE.length ? 'Pick a game to join.' : 'No open games found. Go Back and create one, or Refresh.');
+  }, 3500);
+}
+function joinFFASlot(k){
+  const name = myName(); netStop();
+  const my = netSearch;
+  netStatus('Joining…');
+  tryJoinFFA(k, name, my).then(ok => { if (!ok && my === netSearch) netStatus('Could not join: the game may have started or be full. Try Refresh.'); });
+}
 function ffaLobbyUI(){
   if (!NET || !NET.ffa) return;
   netStatus('Free-for-all lobby (' + NET.players.length + '/4): ' + NET.players.map(p => p.name).join(', ') + ' — share the link! Press Start when ready (min 2).');
@@ -631,23 +684,31 @@ function tryHostFFA(k, name, my){
       ffaLobbyUI(); res('host');
     });
     peer.on('connection', conn => {
-      conn.on('open', () => {
-        if (!NET || NET.peer !== peer || NET.started || NET.players.length >= 4){ conn.send({ t:'busy' }); setTimeout(() => conn.close(), 300); return; }
-        const pid = [1, 2, 3].find(p => !NET.players.some(q => q.pid === p));
-        const c = { conn, pid }; NET.conns.push(c);
-        conn.on('data', m => {
-          if (m.t === 'join'){ NET.players.push({ pid, name:m.name }); conn.send({ t:'welcome', pid }); ffaBroadcastLobby(); if (NET.players.length === 4) startFFAHost(); return; }
-          m.pid = pid;
-          NET.conns.forEach(o => { if (o !== c && o.conn.open) o.conn.send(m); });   // relay to everyone else
-          onNet(m);
-        });
+      let c = null, pid = null;
+      conn.on('data', m => {
+        if (m.t === 'info'){   // someone browsing the game list
+          if (NET && NET.peer === peer) conn.send({ t:'info', host:NET.name, n:NET.players.length, started:!!NET.started });
+          return;
+        }
+        if (m.t === 'join'){
+          if (!NET || NET.peer !== peer || NET.started || NET.players.length >= 4){ conn.send({ t:'busy' }); setTimeout(() => conn.close(), 300); return; }
+          pid = [1, 2, 3].find(p => !NET.players.some(q => q.pid === p));
+          c = { conn, pid }; NET.conns.push(c);
+          NET.players.push({ pid, name:m.name }); conn.send({ t:'welcome', pid }); ffaBroadcastLobby(); if (NET.players.length === 4) startFFAHost(); return;
+        }
+        if (!c) return;
+        m.pid = pid;
+        NET.conns.forEach(o => { if (o !== c && o.conn.open) o.conn.send(m); });   // relay to everyone else
+        onNet(m);
+      });
+      {
         conn.on('close', () => {
-          if (!NET || !NET.ffa) return;
+          if (!NET || !NET.ffa || !c) return;
           NET.conns = NET.conns.filter(o => o !== c); NET.players = NET.players.filter(p => p.pid !== pid);
           if (!NET.started) ffaBroadcastLobby();
           else { const f = FIGHTERS[pid]; if (f){ f.hp = 0; f.hpEl.style.width = '0%'; f.root.visible = false; } }
         });
-      });
+      }
     });
     peer.on('error', err => { if (!done){ done = true; peer.destroy(); res(err.type === 'unavailable-id' ? 'taken' : 'error'); } });
     setTimeout(() => { if (!done){ done = true; peer.destroy(); res('error'); } }, 8000);
@@ -833,9 +894,11 @@ function showMenu(page){
     : page === 'controls'
     ? [['Back', () => showMenu('mode')]]
     : page === 'online'
-    ? [['Find 1 vs 1 match', () => findMatch()], ['Free-for-all (up to 4)', () => findFFA()], ['Back', () => showMenu('mode')]]
+    ? [['Find 1 vs 1 match', () => findMatch()], ['Create free-for-all game', () => createFFA()], ['Join free-for-all game', () => browseFFA()], ['Back', () => showMenu('mode')]]
+    : page === 'browse'
+    ? [...BROWSE.map(g => ['Join ' + g.host + "'s game (" + g.n + '/4)', () => joinFFASlot(g.k)]), ['Refresh list', () => browseFFA()], ['Back', () => showMenu('online')]]
     : [['Easy', () => startGame('cpu', 'Easy')], ['Normal', () => startGame('cpu', 'Normal')], ['Hard', () => startGame('cpu', 'Hard')], ['Back', () => showMenu('mode')]];
-  menuSub.textContent = page === 'mode' ? 'Choose a mode' : page === 'online' ? 'Enter your name' : page === 'controls' ? 'Controls' : 'Choose difficulty';
+  menuSub.textContent = page === 'mode' ? 'Choose a mode' : page === 'online' ? 'Enter your name' : page === 'browse' ? 'Free-for-all games' : page === 'controls' ? 'Controls' : 'Choose difficulty';
   if (page === 'controls'){
     const rows = [
       ['Move', 'Left stick', 'W A S D', 'Arrow keys'],
@@ -876,7 +939,7 @@ function showMenu(page){
     const b = document.createElement('button'); b.textContent = label; b.onclick = fn;
     b.onmouseenter = () => { menuSel = i; markSel(); }; menuBtns.appendChild(b); return { b, fn };
   });
-  if (page === 'online'){ const st = document.createElement('div'); st.className = 'status'; st.id = 'netStatus'; menuBtns.appendChild(st); }
+  if (page === 'online' || page === 'browse'){ const st = document.createElement('div'); st.className = 'status'; st.id = 'netStatus'; menuBtns.appendChild(st); }
   menuSel = page === 'level' ? 1 : 0; markSel();
 }
 function markSel(){ sfx.click(); menuItems.forEach((m, i) => m.b.classList.toggle('sel', i === menuSel)); }
