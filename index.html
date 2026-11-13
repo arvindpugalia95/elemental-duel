@@ -220,12 +220,12 @@ scene.add(new THREE.HemisphereLight(0xdfeeff, 0x6a6058, 0.32));
 const sun = new THREE.DirectionalLight(0xfff1dc, 1.05);
 sun.position.set(30, 55, 20); sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left:-35, right:35, top:35, bottom:-35, far:150 });
+Object.assign(sun.shadow.camera, { left:-56, right:56, top:56, bottom:-56, far:180 });
 sun.shadow.bias = -0.0003; sun.shadow.normalBias = 0.02;
 scene.add(sun);
 
 // ---------- Courtyard ----------
-const AW = 48, AD = 48, WH = 10;
+const AW = 84, AD = 84, WH = 10;   // arena size (was 48)
 const slabTex = canvasTex(512, 512, (g, w) => {
   g.fillStyle = '#4c5563'; g.fillRect(0,0,w,w);
   for (let y=0;y<4;y++) for (let x=0;x<4;x++){
@@ -310,6 +310,35 @@ stands(AW/2 + 2.5, 0, -Math.PI/2, AD+8);
 stands(-AW/2 - 2.5, 0, Math.PI/2, AD+8);
 stands(0, AD/2 + 2.5, Math.PI, AW+8);
 
+// ---------- Arena obstacles: real walls, pillars and crates (block movement and energy balls) ----------
+const OBST = [];
+function obstacle(x, z, w, h, d, color, round){
+  const geo = round ? new THREE.CylinderGeometry(w/2, w/2*1.08, h, 18) : new THREE.BoxGeometry(w, h, d);
+  const m = add(new THREE.Mesh(geo, mat(color, { roughness:0.9 })));
+  m.position.set(x, h/2, z);
+  if (!round){ const cap = add(new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.35, d + 0.3), mat(0x7e6c62))); cap.position.set(x, h + 0.17, z); }
+  OBST.push({ x, z, hx:w/2, hz:(round ? w : d)/2, h });
+}
+// broken stone walls in a ring around the centre (the middle stays open for fighting)
+[[0, -16, 9, 2.6, 1.1], [0, 16, 9, 2.6, 1.1], [-16, 0, 1.1, 2.6, 9], [16, 0, 1.1, 2.6, 9]].forEach(([x, z, w, h, d]) => obstacle(x, z, w, h, d, 0xb89e94));
+[[-26, -26, 7, 3.2, 1.1], [26, 26, 7, 3.2, 1.1], [-26, 26, 1.1, 3.2, 7], [26, -26, 1.1, 3.2, 7]].forEach(([x, z, w, h, d]) => obstacle(x, z, w, h, d, 0xa88e84));
+// tall pillars
+[[-11, -11], [11, -11], [-11, 11], [11, 11], [0, -30], [0, 30], [-30, 0], [30, 0]].forEach(([x, z]) => obstacle(x, z, 2.2, 6, 2.2, 0x8a7468, true));
+// low crates to jump over or hide behind
+[[-20, -8], [20, 8], [-8, 22], [8, -22], [-34, 14], [34, -14], [14, 34], [-14, -34]].forEach(([x, z]) => obstacle(x, z, 2, 1.4, 2, 0x7a5236));
+function pushOutOfObstacles(f){
+  const p = f.root.position, r = 0.35;
+  for (const o of OBST){
+    if (p.y >= o.h) continue;   // standing on top / hovering above
+    const dx = p.x - o.x, dz = p.z - o.z, ox = o.hx + r - Math.abs(dx), oz = o.hz + r - Math.abs(dz);
+    if (ox > 0 && oz > 0){ if (ox < oz) p.x += Math.sign(dx || 1)*ox; else p.z += Math.sign(dz || 1)*oz; }
+  }
+}
+function hitsObstacle(pos){
+  for (const o of OBST) if (pos.y < o.h && Math.abs(pos.x - o.x) < o.hx && Math.abs(pos.z - o.z) < o.hz) return true;
+  return false;
+}
+
 // ---------- Anime cel-shading: toon materials + ink outlines on everything ----------
 const GRAD = (() => { const t = new THREE.DataTexture(new Uint8Array([95,95,95,255, 175,175,175,255, 255,255,255,255]), 3, 1, THREE.RGBAFormat);
   t.minFilter = t.magFilter = THREE.NearestFilter; t.needsUpdate = true; return t; })();
@@ -348,7 +377,7 @@ toonify(scene);
 const A = window.ED_ASSETS;
 const b64buf = s => Uint8Array.from(atob(s), c => c.charCodeAt(0)).buffer;
 const loader = new THREE.GLTFLoader();
-const TARGET_H = 2.0;   // fighter height (was 3.3)
+const TARGET_H = 1.4;   // fighter height
 function parseGLB(b64){
   return new Promise((res, rej) => {
     const cib = window.createImageBitmap; window.createImageBitmap = undefined;   // use <img> + data: URIs for textures
@@ -401,11 +430,11 @@ function makeFighter(element, tint, startPos, hpEl, charKey = 'ch24'){
               element, cd:0, busy:0, hitDone:true, mats:[], flash:0, deflectT:0, dcd:0, wcd:0, comboT:0, chainT:0, chain:0, sinceRoll:9, holdT:0, charge:0, charging:false, down:false, hitSide:false, hp:100, mp:100, hpEl, prev:{}, combo:0, stun:0, iframes:0, rollDir:new THREE.Vector3() };
   f.root.position.copy(startPos); scene.add(f.root);
   f.aura = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.15, 48), new THREE.MeshBasicMaterial({ color:tint, transparent:true, opacity:0.55, side:THREE.DoubleSide }));
-  f.aura.rotation.x = -Math.PI/2; f.aura.position.y = 0.03; f.aura.scale.setScalar(0.65); f.root.add(f.aura);
+  f.aura.rotation.x = -Math.PI/2; f.aura.position.y = 0.03; f.aura.scale.setScalar(0.45); f.root.add(f.aura);
   f.shield = new THREE.Mesh(new THREE.CircleGeometry(1.5, 40), new THREE.MeshBasicMaterial({ color:tint, transparent:true, opacity:0, side:THREE.DoubleSide, depthWrite:false }));
   const rim = new THREE.Mesh(new THREE.RingGeometry(1.38, 1.55, 40), new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0, side:THREE.DoubleSide, depthWrite:false }));
   f.shield.add(rim); f.shield.rim = rim;
-  f.shield.position.set(0, 1.15, 0.7); f.shield.scale.setScalar(0.65); f.shield.visible = false; f.root.add(f.shield);
+  f.shield.position.set(0, 0.8, 0.5); f.shield.scale.setScalar(0.45); f.shield.visible = false; f.root.add(f.shield);
   Promise.all([parseGLB(A.characters[charKey]), masterClips()]).then(([gltf, clips]) => {
     const m = gltf.scene;
     m.traverse(o => {
@@ -419,7 +448,7 @@ function makeFighter(element, tint, startPos, hpEl, charKey = 'ch24'){
     m.traverse(o => { if (o.isBone){ o.getWorldPosition(v); headY = Math.max(headY, v.y); } });
     const h = headY > 0.01 ? headY * 1.12 : 2.0;
     m.scale.multiplyScalar(TARGET_H / h);
-    f.pivot = new THREE.Group(); f.pivot.position.y = 1.0; m.position.y -= 1.0; f.pivot.add(m); f.root.add(f.pivot);
+    f.pivot = new THREE.Group(); f.pivot.position.y = 0.7; m.position.y -= 0.7; f.pivot.add(m); f.root.add(f.pivot);
     f.mixer = new THREE.AnimationMixer(m);
     clips.forEach(c => f.actions[c.name] = f.mixer.clipAction(c));
     ['Punch_Left','Punch_Right','Kick_Left','Kick_Right','Roll','HitRecieve','HitRecieve_2','Death','Cast','Interact','Sword_Slash','Jump','Getup'].forEach(n => {
@@ -847,7 +876,7 @@ function onNet(m){
       const prev = p.owner; p.owner = p.target; p.target = prev;
       p.g.position.set(...m.pos); p.vel.set(...m.vel); p.g.lookAt(p.g.position.clone().add(p.vel));
       p.dmg = m.dmg; p.sc = m.sc; p.body.scale.setScalar(p.sc); p.life = 1.8;
-      hitstop = 0.08; shake = Math.max(shake, 0.16); spark(p.g.position.clone().setY(p.g.position.y - 1.15), m.perfect);
+      hitstop = 0.08; shake = Math.max(shake, 0.16); spark(p.g.position.clone().setY(p.g.position.y - 0.8), m.perfect);
       sfx.deflect(m.perfect); dmgText(p.owner.root.position, m.perfect ? 'PERFECT!' : 'DEFLECT!', m.perfect ? '#ffd23f' : '#9fe8ff');
       break;
     }
@@ -1057,7 +1086,7 @@ function aimDir(f, isP1, out){
 }
 function handPos(f, aim, side){
   const r = new THREE.Vector3(aim.z, 0, -aim.x);
-  return f.root.position.clone().addScaledVector(aim, 1.0).addScaledVector(r, side*0.35).setY(f.root.position.y + 1.25);
+  return f.root.position.clone().addScaledVector(aim, 1.0).addScaledVector(r, side*0.35).setY(f.root.position.y + 0.88);
 }
 function startMelee(f, anim, ts, busy, atk, lunge){
   sfx.swing(atk.dmg >= 10);
@@ -1203,6 +1232,7 @@ function moveFighter(f, o, inp, dt, isP1){
   }
   f.root.position.x = Math.max(-LIMIT, Math.min(LIMIT, f.root.position.x));
   f.root.position.z = Math.max(-LIMIT, Math.min(LIMIT, f.root.position.z));
+  pushOutOfObstacles(f);
 
   if (!f.down){
     f.aimT = Math.max(0, (f.aimT || 0) - dt);
@@ -1290,7 +1320,7 @@ function dmgText(pos, n, color){
   g.clearRect(0,0,128,64); g.font = (typeof n === 'string' ? 'bold 27px' : 'bold 48px') + ' Impact, sans-serif'; g.textAlign = 'center'; g.lineWidth = 8;
   g.strokeStyle = '#1a1010'; g.strokeText(n, 64, 50); g.fillStyle = color; g.fillText(n, 64, 50);
   d.t.needsUpdate = true; d.sp.visible = true; d.life = 0.7;
-  d.sp.position.set(pos.x + (Math.random()-0.5)*0.8, pos.y + 2.4, pos.z);
+  d.sp.position.set(pos.x + (Math.random()-0.5)*0.6, pos.y + 1.7, pos.z);
   d.sp.scale.set(2.2, 1.1, 1);
 }
 function updateDmg(dt){
@@ -1307,7 +1337,7 @@ function explodeDust(pos, el){
 // impact spark
 const sparks = [];
 function spark(pos, big){
-  const c = new THREE.Vector3(pos.x, pos.y + 1.15, pos.z), n = big ? 12 : 7;
+  const c = new THREE.Vector3(pos.x, pos.y + 0.8, pos.z), n = big ? 12 : 7;
   for (let i = 0; i < n; i++){ const a = i/n*Math.PI*2, sp = big ? 11 : 7; puff(c, i % 2 ? 0xffffff : 0xffe066, big ? 0.5 : 0.35, Math.cos(a)*sp, Math.sin(a)*sp*0.7 + 2, Math.sin(a)*sp, big ? 0.22 : 0.16); }
   puff(c, 0xffffff, big ? 1.6 : 0.9, 0, 0, 0, 0.07);
 }
@@ -1631,7 +1661,7 @@ function updateProjectiles(dt){
     if (blocked){ scene.remove(p.g); p.body.material.dispose(); p.glow.material.dispose(); shots.splice(i, 1); continue; }
     if (gameMode === 'ffa'){ const nt = nearestFoeTo(p.g.position, p.owner); if (nt) p.target = nt; }
     const t = p.target, tp = t.root.position;
-    const dx = p.g.position.x - tp.x, dy = p.g.position.y - (tp.y + 1.05), dz = p.g.position.z - tp.z;
+    const dx = p.g.position.x - tp.x, dy = p.g.position.y - (tp.y + 0.75), dz = p.g.position.z - tp.z;
     let done = false;
     const rr = 1.0 * Math.max(1, p.sc*0.8);
     const atk = { dmg:p.dmg, kb:p.kb, launch:p.launch, heavy:p.heavy };
@@ -1648,12 +1678,12 @@ function updateProjectiles(dt){
       if (isNet()) send({ t:'deflect', sid:p.sid, pos:[p.g.position.x, p.g.position.y, p.g.position.z], vel:[p.vel.x, p.vel.y, p.vel.z], dmg:p.dmg, sc:p.sc, perfect });
       if (!t.remote){ t.deflectT = 0; t.dcd = 0.15; t.busy = 0.1; }
       hitstop = 0.08; shake = Math.max(shake, 0.16);
-      spark(p.g.position.clone().setY(p.g.position.y - 1.15), perfect);
+      spark(p.g.position.clone().setY(p.g.position.y - 0.8), perfect);
       sfx.deflect(perfect); dmgText(t.root.position, perfect ? 'PERFECT!' : 'DEFLECT!', perfect ? '#ffd23f' : '#9fe8ff');
     } else if (t.hp > 0 && t.iframes === 0 && dx*dx + dz*dz < rr*rr && Math.abs(dy) < 1.8*Math.max(1, p.sc*0.7)){
       hit(t, atk, p.vel.clone().setY(0).normalize());
       explode(p.g.position, p.e, true, p.sc); done = true; p.endBig = true;
-    } else if (p.life <= 0 || Math.abs(p.g.position.x) > AW/2 - 0.8 || Math.abs(p.g.position.z) > AD/2 - 0.8 || p.g.position.y < 0.3){
+    } else if (p.life <= 0 || hitsObstacle(p.g.position) || Math.abs(p.g.position.x) > AW/2 - 0.8 || Math.abs(p.g.position.z) > AD/2 - 0.8 || p.g.position.y < 0.3){
       // big charged blasts still catch you in the explosion radius
       if (p.aoe && t.hp > 0 && t.iframes === 0 && Math.hypot(dx, dz) < p.aoe) hit(t, atk, new THREE.Vector3(-dx, 0, -dz).normalize());
       explode(p.g.position, p.e, !!p.aoe, p.sc); done = true; p.endBig = !!p.aoe;
@@ -1686,7 +1716,7 @@ function separate(){
 }
 
 // ---------- Third-person camera behind Player 1 ----------
-let yawOff = 0, pitch = 0.32, camDist = 4.2, dragging = false, lx = 0, ly = 0;
+let yawOff = 0, pitch = 0.32, camDist = 3.3, dragging = false, lx = 0, ly = 0;
 const el = renderer.domElement;
 // Mouse: click the game to lock the mouse, then just move it to look (Esc frees it).
 // Left click = fireball (tap x3 combo, hold to charge) · right click = deflect.
@@ -1734,7 +1764,7 @@ function updateCamera(dt){
   }
   if (!dragging && !locked() && !(pad && Math.abs(pad.axes[2]||0) > 0.15)) yawOff *= Math.pow(0.15, dt); // drift back behind the player
   pitch = Math.min(1.0, Math.max(-0.3, pitch));   // can tilt the camera upward to aim up
-  camDist = Math.min(12, Math.max(3, camDist));
+  camDist = Math.min(12, Math.max(2.2, camDist));
   const mp = (ME || p1f).root.position, tp2 = (THEM || p2f).root.position;
   const base = Math.atan2(mp.x - tp2.x, mp.z - tp2.z);
   // mouse locked = free look like a shooter (camera stays where you point it); otherwise lock-on camera
@@ -1743,7 +1773,7 @@ function updateCamera(dt){
   const yaw = camYaw !== null ? camYaw : base + yawOff;
   const target = new THREE.Vector3(
     mp.x + Math.sin(yaw)*Math.cos(pitch)*camDist,
-    mp.y + 1.6 + Math.sin(pitch)*camDist,
+    mp.y + 1.2 + Math.sin(pitch)*camDist,
     mp.z + Math.cos(yaw)*Math.cos(pitch)*camDist);
   // over-the-shoulder offset
   target.x += Math.cos(yaw)*0.9; target.z -= Math.sin(yaw)*0.9;
@@ -1756,7 +1786,7 @@ function updateCamera(dt){
   camPos.lerp(target, 1 - Math.pow(locked() ? 1e-9 : 0.001, dt));   // near-instant follow with the mouse = no lag
   camera.position.copy(camPos);
   if (shake > 0){ shake -= dt; camera.position.x += (Math.random()-0.5)*0.25; camera.position.y += (Math.random()-0.5)*0.25; }
-  lookAt.set(mp.x - Math.sin(yaw)*6, 1.3 + mp.y*0.5, mp.z - Math.cos(yaw)*6);
+  lookAt.set(mp.x - Math.sin(yaw)*6, 0.95 + mp.y*0.5, mp.z - Math.cos(yaw)*6);
   camera.lookAt(lookAt);
 }
 camPos.set(p1.position.x, 5, p1.position.z + 6);
