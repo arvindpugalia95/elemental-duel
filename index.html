@@ -704,6 +704,7 @@ function showMenu(page){
   if (page === 'controls'){
     const rows = [
       ['Move', 'Left stick', 'W A S D', 'Arrow keys'],
+      ['Sprint (run faster)', 'Click & hold left stick', 'Hold Shift', 'Num 0'],
       ['Look / aim', 'Right stick', 'Move mouse (click game first, Esc frees mouse)', '—'],
       ['Zoom camera', 'D-pad up / down', 'Mouse wheel', '—'],
       ['Reset camera', 'Click right stick', '—', '—'],
@@ -792,11 +793,12 @@ function readInput(idx){
   const pad = [...navigator.getGamepads()].filter(Boolean)[idx], k = KB[idx];
   if (idx === 1 && gameMode === 'cpu') return aiInput();
   let x = 0, y = 0;
-  const b = { down:!!keys[k.down], jump:!!keys[k.jump], roll:!!keys[k.roll], punch:!!keys[k.punch], kick:!!keys[k.kick], shoot:!!keys[k.shoot], deflect:!!keys[k.deflect], wall:!!keys[k.wall] };
+  const b = { sprint: idx === 0 ? !!(keys.ShiftLeft || keys.ShiftRight) : !!keys.Numpad0, down:!!keys[k.down], jump:!!keys[k.jump], roll:!!keys[k.roll], punch:!!keys[k.punch], kick:!!keys[k.kick], shoot:!!keys[k.shoot], deflect:!!keys[k.deflect], wall:!!keys[k.wall] };
   if (pad){
     x = pad.axes[0]||0; y = pad.axes[1]||0;
     b.jump  ||= pad.buttons[0]?.pressed;   // A
-    b.down  ||= pad.buttons[10]?.pressed;  // click left stick = fly down
+    b.down  ||= pad.buttons[10]?.pressed;  // click left stick = fly down (in the air)
+    b.sprint ||= pad.buttons[10]?.pressed; // click left stick = sprint (on the ground)
     b.roll  ||= pad.buttons[1]?.pressed || pad.buttons[5]?.pressed;   // B or RB
     b.punch ||= pad.buttons[2]?.pressed;   // X
     b.kick  ||= pad.buttons[3]?.pressed;   // Y
@@ -959,10 +961,11 @@ function moveFighter(f, o, inp, dt, isP1){
 
   // ---- velocity ----
   const slow = f.charging || f.blocking ? 0.35 : 1;
+  const sprint = inp.sprint && f.onGround && !f.flying && !f.charging && !f.blocking ? 1.6 : 1;   // Shift / L3 = run faster
   if (f.cur === 'Roll' && f.busy > 0) want.copy(f.rollDir).multiplyScalar(14);
   else if (f.attack && f.attack.name === 'dive' && !f.onGround) want.copy(f.vel);
   else if (f.busy > 0 || f.stun > 0 || f.hp <= 0) want.set(0,0,0);
-  else want.copy(fwd).multiplyScalar(-inp.y).addScaledVector(right, inp.x).multiplyScalar(RUN*slow*(f.flying ? 1.15 : 1));
+  else want.copy(fwd).multiplyScalar(-inp.y).addScaledVector(right, inp.x).multiplyScalar(RUN*slow*sprint*(f.flying ? 1.15 : 1));
   f.vel.lerp(want, 1 - Math.exp(-(f.stun > 0 ? 3 : f.busy > 0 && f.cur !== 'Roll' ? 6 : ACCEL)*dt));
   f.root.position.addScaledVector(f.vel, dt);
   if (f.flying){   // hover: hold jump to rise, C / click left stick to go down, otherwise stay in the air
